@@ -29,10 +29,29 @@ class IndustryNews(Base):
     content_fingerprint = Column(String(16), index=True, comment="SimHash 内容指纹(16位十六进制)")
     is_duplicate = Column(Boolean, default=False, comment="是否近重复(仍保留入库但标记)")
     duplicate_of_id = Column(UUID(as_uuid=True), comment="重复于哪条资讯的ID")
+    # ===== LLM 结构化抽取（docker/init-db/04-news-extraction.sql）=====
+    extracted_topics = Column(Text, comment="主题标签 JSON 数组 [{type,name}]")
+    event_type = Column(String(50), index=True, comment="事件类型：投产扩产/停产检修/价格变动/政策发布/安全事故/环保处罚/并购融资/技术突破/招投标/其他")
+    impact_direction = Column(String(20), comment="影响方向：positive/negative/neutral")
+    key_numbers = Column(Text, comment="关键数字 JSON 数组 [{name,value,unit}]")
+    entities = Column(Text, comment="涉及公司/产品/机构 JSON 数组")
+    summary = Column(String(500), comment="一句话摘要")
+    extraction_status = Column(String(20), default="pending", index=True, comment="抽取状态：pending/completed/failed")
+    extracted_at = Column(DateTime, comment="抽取完成时间")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
+        import json as _json
+
+        def _safe_json(text, default):
+            if not text:
+                return default
+            try:
+                return _json.loads(text)
+            except (ValueError, TypeError):
+                return default
+
         return {
             "id": str(self.id),
             "industry_id": self.industry_id,
@@ -47,6 +66,16 @@ class IndustryNews(Base):
             "keywords": self.keywords,
             "is_read": self.is_read,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            # 去重指纹
+            "is_duplicate": self.is_duplicate,
+            # LLM 抽取结果
+            "extracted_topics": _safe_json(self.extracted_topics, []),
+            "event_type": self.event_type,
+            "impact_direction": self.impact_direction,
+            "key_numbers": _safe_json(self.key_numbers, []),
+            "entities": _safe_json(self.entities, []),
+            "summary": self.summary,
+            "extraction_status": self.extraction_status,
         }
 
 
