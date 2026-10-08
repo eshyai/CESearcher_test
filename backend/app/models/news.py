@@ -25,6 +25,10 @@ class IndustryNews(Base):
     collected_at = Column(DateTime, default=datetime.utcnow, comment="采集时间")
     keywords = Column(String(500), comment="关键词")
     is_read = Column(Boolean, default=False, comment="是否已读")
+    # ===== 去重指纹（docker/init-db/03-news-dedup.sql）=====
+    content_fingerprint = Column(String(16), index=True, comment="SimHash 内容指纹(16位十六进制)")
+    is_duplicate = Column(Boolean, default=False, comment="是否近重复(仍保留入库但标记)")
+    duplicate_of_id = Column(UUID(as_uuid=True), comment="重复于哪条资讯的ID")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

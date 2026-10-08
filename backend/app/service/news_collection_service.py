@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from models.news import IndustryNews, BiddingInfo, NewsCollectionTask, FocusTopic
 from service.bidding_service import get_bidding_service
+from service.dedup_service import get_dedup_service
 from config.industry_config import get_industry_config, get_all_industries
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class NewsCollectionService:
         self.db = db
         self.bocha_api_key = os.getenv("BOCHA_API_KEY", "")
         self.bidding_service = get_bidding_service()
+        self.dedup = get_dedup_service()
 
         if not self.bocha_api_key:
             logger.warning("BOCHA_API_KEY 环境变量未设置")
@@ -129,6 +131,7 @@ class NewsCollectionService:
 
         collected = []
         errors = []
+        duplicates = 0
 
         try:
             items_per_keyword = max(2, max_items // len(news_keywords))
@@ -156,7 +159,7 @@ class NewsCollectionService:
                         if not source_url:
                             continue
 
-                        # 检查是否已存在
+                        # 检查是否已存在（URL 精确去重）
                         existing = self.db.query(IndustryNews).filter(
                             IndustryNews.source_url == source_url
                         ).first()
@@ -174,6 +177,18 @@ class NewsCollectionService:
                         content = item.get('summary', '') or item.get('snippet', '')
                         category = self._categorize_news(title, content)
 
+                        # 内容指纹去重（近重复检测：转载/改写/同事件多源报道）
+                        fingerprint = self.dedup.compute_fingerprint(title, content)
+                        duplicate_of = self.dedup.find_duplicate(
+                            self.db, fingerprint, title=title, content=content
+                        )
+                        if duplicate_of:
+                            duplicates += 1
+                            logger.debug(
+                                f"[dedup] 跳过近重复资讯: '{title[:50]}' -> 重复于 {duplicate_of}"
+                            )
+                            continue
+
                         news = IndustryNews(
                             industry_id=industry_id or "smart_transportation",
                             title=title[:500] if title else '无标题',
@@ -184,6 +199,7 @@ class NewsCollectionService:
                             department=self._extract_department(title, content),
                             publish_time=publish_time,
                             keywords=keyword,
+                            content_fingerprint=fingerprint,
                             collected_at=datetime.utcnow()
                         )
 
@@ -207,9 +223,15 @@ class NewsCollectionService:
                 task.error_message = "; ".join(errors[:5])
             self.db.commit()
 
+            logger.info(
+                f"[collect_news] 采集完成: 新增 {len(collected)} 条, "
+                f"去重过滤 {duplicates} 条"
+            )
+
             return {
                 "success": True,
                 "collected": len(collected),
+                "duplicates_filtered": duplicates,
                 "errors": errors
             }
 
