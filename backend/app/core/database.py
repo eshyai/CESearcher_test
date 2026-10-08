@@ -11,7 +11,9 @@ POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres123")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "industry_assistant")
 
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+# 显式指定 psycopg2 方言：新版 SQLAlchemy 对 postgresql:// 默认尝试 psycopg(v3)，
+# 而本项目依赖为 psycopg2-binary，不固定会导致全新环境安装后启动即崩溃
+DATABASE_URL = f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
