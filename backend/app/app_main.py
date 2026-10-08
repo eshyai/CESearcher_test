@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -40,13 +41,17 @@ async def lifespan(app: FastAPI):
     # 启动时执行
     logger.info("应用启动中...")
 
-    # 初始化定时任务调度器并检查数据
-    try:
-        from service.scheduler_service import init_scheduler_and_check_data
-        await init_scheduler_and_check_data()
-        logger.info("定时任务调度器启动成功")
-    except Exception as e:
-        logger.error(f"定时任务调度器启动失败: {e}")
+    # 采集管道已拆分到独立 Worker 进程（python app/worker_main.py）
+    # 如需恢复旧行为（API 进程内嵌定时采集），设置 ENABLE_EMBEDDED_SCHEDULER=true
+    if os.getenv("ENABLE_EMBEDDED_SCHEDULER", "").lower() == "true":
+        try:
+            from service.scheduler_service import init_scheduler_and_check_data
+            await init_scheduler_and_check_data()
+            logger.info("内嵌定时任务调度器启动成功（ENABLE_EMBEDDED_SCHEDULER=true）")
+        except Exception as e:
+            logger.error(f"内嵌定时任务调度器启动失败: {e}")
+    else:
+        logger.info("采集调度已由独立 Worker 进程承担（python app/worker_main.py），API 进程不启动内嵌调度器")
 
     yield
 

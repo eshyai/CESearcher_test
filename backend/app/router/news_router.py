@@ -33,6 +33,8 @@ class CollectionResponse(BaseModel):
     message: str
     news_collected: int = 0
     bidding_collected: int = 0
+    duplicates_filtered: int = 0
+    extraction: Optional[dict] = None
     errors: List[str] = []
 
 
@@ -123,26 +125,25 @@ async def trigger_collection(
     db: Session = Depends(get_db)
 ):
     """
-    手动触发资讯采集（异步执行）
+    手动触发完整资讯管道：采集(含去重) -> LLM 结构化抽取
     """
     logger.info(f"[news_router] trigger_collection 请求: industry_id={industry_id}, max_news={max_news}, max_bidding={max_bidding}")
-    scheduler = get_scheduler_service()
-
-    # 在后台执行采集任务
-    async def run_collection():
-        result = await scheduler.run_collection_now(db)
-        return result
 
     # 直接执行（不使用后台任务，以便返回结果）
     try:
-        service = get_news_collection_service(db)
-        logger.info(f"[news_router] 开始调用 service.collect_all(), industry_id={industry_id}")
-        result = await service.collect_all(max_news=max_news, max_bidding=max_bidding,
-                                           industry_id=industry_id, focus_user_id=current_user.id)
-        logger.info(f"[news_router] collect_all 返回: {result}")
+        from service.news_pipeline import run_full_pipeline
+        logger.info(f"[news_router] 开始执行完整管道, industry_id={industry_id}")
+        result = await run_full_pipeline(
+            max_news=max_news,
+            max_bidding=max_bidding,
+            industry_id=industry_id,
+            focus_user_id=current_user.id,
+        )
+        logger.info(f"[news_router] 管道返回: {result}")
 
-        news_result = result.get("news", {})
-        bidding_result = result.get("bidding", {})
+        news_result = result.get("collection", {}).get("news", {})
+        bidding_result = result.get("collection", {}).get("bidding", {})
+        extraction_result = result.get("extraction", {})
 
         errors = []
         if news_result.get("errors"):
@@ -151,13 +152,15 @@ async def trigger_collection(
             errors.extend(bidding_result["errors"])
 
         response = CollectionResponse(
-            success=result.get("success", False),
-            message="采集完成",
+            success=result.get("collection", {}).get("success", False),
+            message="管道执行完成（采集 + 去重 + 抽取）",
             news_collected=news_result.get("collected", 0),
             bidding_collected=bidding_result.get("collected", 0),
+            duplicates_filtered=news_result.get("duplicates_filtered", 0),
+            extraction=extraction_result,
             errors=errors[:10]  # 只返回前10个错误
         )
-        logger.info(f"[news_router] trigger_collection 返回: success={response.success}, news={response.news_collected}, bidding={response.bidding_collected}")
+        logger.info(f"[news_router] trigger_collection 返回: success={response.success}, news={response.news_collected}, bidding={response.bidding_collected}, dedup={response.duplicates_filtered}")
         return response
     except Exception as e:
         logger.error(f"[news_router] trigger_collection 异常: {e}", exc_info=True)
@@ -171,13 +174,15 @@ async def trigger_collection(
 @router.get("/scheduler/status")
 async def get_scheduler_status():
     """
-    获取定时任务状态
+    获取定时任务状态（采集调度默认已迁移到独立 Worker 进程）
     """
     scheduler = get_scheduler_service()
     jobs = scheduler.get_jobs_info()
 
     return {
         "success": True,
+        "mode": "worker" if not jobs else "embedded",
+        "message": "采集调度默认运行在独立 Worker 进程（python app/worker_main.py）；设置 ENABLE_EMBEDDED_SCHEDULER=true 可恢复 API 内嵌模式",
         "jobs": jobs
     }
 
