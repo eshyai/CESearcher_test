@@ -9,6 +9,7 @@ import KnowledgePage from '@/pages/knowledge'
 import MemoryPage from '@/pages/memory'
 import DatabasePage from '@/pages/database'
 import NewsPage from '@/pages/news'
+import TopicsPage from '@/pages/topics'
 import BiddingPage from '@/pages/bidding'
 import {
   Navigate,
@@ -58,6 +59,10 @@ export const routes: IRouteObject[] = [
   {
     path: '/news',
     Component: NewsPage,
+  },
+  {
+    path: '/topics',
+    Component: TopicsPage,
   },
   {
     path: '/bidding',

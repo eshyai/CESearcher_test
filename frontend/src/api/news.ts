@@ -231,3 +231,16 @@ export const createFocusTopic = async (payload: {
   const res = await request.post<FocusTopic>('/intelligence/topics', payload)
   return res.data
 }
+
+export const updateFocusTopic = async (
+  topicId: string,
+  payload: { query_text?: string; weight?: number; is_active?: boolean },
+): Promise<FocusTopic> => {
+  const res = await request.patch<FocusTopic>(`/intelligence/topics/${topicId}`, payload)
+  return res.data
+}
+
+export const deleteFocusTopic = async (topicId: string): Promise<{ success: boolean }> => {
+  const res = await request.delete<{ success: boolean }>(`/intelligence/topics/${topicId}`)
+  return res.data
+}

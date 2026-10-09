@@ -89,6 +89,19 @@ async def update_topic(topic_id: UUID, payload: TopicUpdate,
     return topic_dict(topic)
 
 
+@router.delete("/topics/{topic_id}")
+async def delete_topic(topic_id: UUID,
+                       current_user: User = Depends(get_current_user_required),
+                       db: Session = Depends(get_db)):
+    topic = db.query(FocusTopic).filter(
+        FocusTopic.id == topic_id, FocusTopic.user_id == current_user.id).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail="关注主题不存在")
+    db.delete(topic)
+    db.commit()
+    return {"success": True, "deleted_id": str(topic_id)}
+
+
 @router.post("/news/{news_id}/feedback")
 async def save_news_feedback(news_id: UUID, payload: FeedbackRequest,
                              current_user: User = Depends(get_current_user_required),

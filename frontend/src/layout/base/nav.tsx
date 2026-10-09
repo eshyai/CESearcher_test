@@ -6,6 +6,7 @@ import IconMemory from '@/assets/layout/memory.svg'
 import IconDatabase from '@/assets/layout/database.svg'
 import IconNewChat from '@/assets/layout/newchat.svg'
 import IconNews from '@/assets/layout/news.svg'
+import IconStar from '@/assets/layout/star.svg'
 import React, { useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useSnapshot } from 'valtio'
@@ -88,6 +89,12 @@ export function Nav() {
         label: '行业资讯',
         icon: IconNews,
         href: '/news',
+      },
+      {
+        key: 'topics',
+        label: '我的关注',
+        icon: IconStar,
+        href: '/topics',
       },
       {
         key: 'bid',
