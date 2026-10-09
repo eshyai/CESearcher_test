@@ -114,6 +114,9 @@ export interface NewsSearchResponse {
   vector_indexed: boolean
   total: number
   data: NewsItem[]
+  online_total?: number
+  online_kept?: number
+  persisted?: number
 }
 
 export const searchNews = async (params: {
@@ -122,11 +125,14 @@ export const searchNews = async (params: {
   event_type?: string
   impact_direction?: string
   limit?: number
+  include_online?: boolean
 }): Promise<NewsSearchResponse> => {
   // loading: false 用页面自己的检索态；cancelRepeat: false 避免快速连续检索被取消
   const res = await request.post<NewsSearchResponse>('/news/search', params, {
     loading: false,
     cancelRepeat: false,
+    // 全网实时检索 + 重排，耗时比普通接口长，放宽超时
+    timeout: 60000,
   })
   return res.data
 }

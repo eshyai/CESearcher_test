@@ -25,6 +25,12 @@ from service.source_quality_service import get_source_quality_service
 
 
 def main():
+    tag = ""
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--tag" and i + 1 < len(argv):
+            tag = argv[i + 1].strip()
+
     service = get_source_quality_service()
     db = SessionLocal()
     try:
@@ -50,9 +56,14 @@ def main():
             os.path.join(os.path.dirname(__file__), "..", "..", "backups")
         )
         os.makedirs(out_dir, exist_ok=True)
-        fname = os.path.join(
-            out_dir, f"low_quality_news_backup_{datetime.date.today().isoformat()}.json"
-        )
+        base = f"low_quality_news_backup_{datetime.date.today().isoformat()}"
+        if tag:
+            base += f"_{tag}"
+        fname = os.path.join(out_dir, base + ".json")
+        seq = 1
+        while os.path.exists(fname):  # 绝不覆盖既有备份
+            seq += 1
+            fname = os.path.join(out_dir, f"{base}_{seq}.json")
         with open(fname, "w", encoding="utf-8") as fh:
             json.dump(rows, fh, ensure_ascii=False, indent=2)
 

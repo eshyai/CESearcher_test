@@ -208,6 +208,25 @@
 }
 
 .search-card {
+  .search-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    font-size: 13px;
+
+    .search-toolbar-label {
+      opacity: 0.85;
+    }
+
+    .search-toolbar-hint {
+      opacity: 0.5;
+      cursor: help;
+      border-bottom: 1px dashed currentColor;
+    }
+  }
+
   .search-summary {
     display: flex;
     align-items: center;

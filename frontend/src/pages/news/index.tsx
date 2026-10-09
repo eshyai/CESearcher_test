@@ -108,7 +108,14 @@ export default function NewsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<NewsItem[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
-  const [searchMeta, setSearchMeta] = useState<{ mode: string; vectorIndexed: boolean } | null>(null)
+  const [searchMeta, setSearchMeta] = useState<{
+    mode: string
+    vectorIndexed: boolean
+    onlineKept: number
+    persisted: number
+  } | null>(null)
+  // 是否同时检索全网（默认开）：一次搜索即可拿到库里没有的最新资讯，并把优质结果沉淀入库
+  const [includeOnline, setIncludeOnline] = useState(true)
 
   // 采集状态
   const [collecting, setCollecting] = useState(false)
@@ -167,9 +174,19 @@ export default function NewsPage() {
           query: q,
           industry_id: currentIndustryId,
           limit: 20,
+          include_online: includeOnline,
         })
         setSearchResults(res.data)
-        setSearchMeta({ mode: res.mode, vectorIndexed: res.vector_indexed })
+        setSearchMeta({
+          mode: res.mode,
+          vectorIndexed: res.vector_indexed,
+          onlineKept: res.online_kept || 0,
+          persisted: res.persisted || 0,
+        })
+        // 有全网结果沉淀入库时，顺带刷新列表页码总数
+        if ((res.persisted || 0) > 0) {
+          fetchNews()
+        }
       } catch (error: any) {
         console.error('[NewsPage] doSearch 错误:', error)
         message.error(error?.response?.data?.detail || '检索失败')
@@ -178,7 +195,7 @@ export default function NewsPage() {
         setSearchLoading(false)
       }
     },
-    [currentIndustryId],
+    [currentIndustryId, includeOnline, fetchNews],
   )
 
   const exitSearch = () => {
@@ -277,6 +294,11 @@ export default function NewsPage() {
       {showScore && item.score !== undefined && (
         <div className={styles['news-tags']}>
           <Tag color="green">相关度 {item.score.toFixed(3)}</Tag>
+          {item.source_type === 'web' ? (
+            <Tag color="cyan">全网</Tag>
+          ) : item.source_type === 'library' ? (
+            <Tag bordered={false}>库内</Tag>
+          ) : null}
           {item.match_reason && <Tag bordered={false}>{item.match_reason}</Tag>}
         </div>
       )}

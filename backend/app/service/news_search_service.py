@@ -1,17 +1,21 @@
 """资讯检索服务 - 「碎片输入 -> 相关报道」
 
-检索策略（混合）：
+检索策略（库内 + 全网混合）：
 1. 向量召回：把碎片文本 embedding 后在 Milvus 里按 COSINE 召回（主管「语义相近」，
    能处理"描述性片段"和同义改写，比如 "装置停车" 命中 "停产检修"）。
 2. 关键词召回：Postgres ILIKE 命中 title/summary/content/entities（主管"精确名字"，
    比如公司名、产品名、政策文号；向量对专有名词不够敏感）。
-3. 合并去重后，用 DashScope Rerank 对候选做精细重排（rerank 失败则退回融合分）。
+3. 全网实时：调用 news_live_search_service 走博查 web-search 补充"库里没有"的资讯，
+   过滤低质来源后与库内候选一起重排——这样"一个搜索"即可完成，不依赖预先采集。
+4. 合并去重后，用 DashScope Rerank 对全部候选做精细重排（rerank 失败则退回融合分）。
+5. 通过阈值的全网结果会**沉淀入库 + 建向量索引**，下次搜索即可被库内命中（库随使用自增长）。
 
 向量索引不存在时自动降级为纯关键词检索，接口不会报错。
 """
 import logging
 import os
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import or_
@@ -20,12 +24,15 @@ from sqlalchemy.orm import Session
 from config.industry_config import DEFAULT_INDUSTRY_ID
 from models.news import IndustryNews
 from service.news_index_service import get_news_index_service
+from service.news_live_search_service import get_news_live_search_service
 
 logger = logging.getLogger(__name__)
 
 # 关键词召回时对候选的上限（再大 rerank 也没收益）
 KEYWORD_CANDIDATES = 40
 VECTOR_CANDIDATES = 40
+# rerank 单次可提交的文档上限（库内 + 全网合计，超出则截断）
+RERANK_MAX_DOCS = int(os.getenv("NEWS_RERANK_MAX_DOCS", "50"))
 # rerank 模型候选链：按序尝试，前一个不可用（403/未开通）时自动换下一个。
 # 注意 gte-rerank 是旧名，在当前网关已 403，故排在后面仅作兜底。
 RERANK_MODELS = [
@@ -59,14 +66,42 @@ def _tokens(query: str) -> List[str]:
 
 
 def _doc_text(news: IndustryNews) -> str:
-    """rerank 用的文档文本：标题 + 摘要（够了，正文太长反而稀释信号）。"""
+    """rerank 用的库内文档文本：标题 + 摘要（够了，正文太长反而稀释信号）。"""
     return "\n".join(p for p in [news.title or "", news.summary or ""] if p)
+
+
+def _online_text(item: Dict[str, Any]) -> str:
+    """rerank 用的全网文档文本：标题 + 摘要。"""
+    return "\n".join(p for p in [item.get("title") or "", item.get("summary") or ""] if p)
+
+
+def _token_hit(query: str, text: str) -> bool:
+    """文本里是否出现 query 的任一 token（小写包含，够用）。"""
+    if not text:
+        return False
+    low = text.lower()
+    return any(t.lower() in low for t in _tokens(query))
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    """把 ISO 字符串解析为 datetime；已是 datetime 则原样返回。"""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        from dateutil import parser as dtparser
+
+        return dtparser.parse(str(value))
+    except Exception:
+        return None
 
 
 class NewsSearchService:
     def __init__(self, db: Session):
         self.db = db
         self.index = get_news_index_service()
+        self.live = get_news_live_search_service()
         self._rerank_model: Optional[str] = None  # 探测到的可用 rerank 模型，进程内复用
 
     # ---------- 对外 ----------
@@ -78,96 +113,138 @@ class NewsSearchService:
         event_type: Optional[str] = None,
         impact_direction: Optional[str] = None,
         limit: int = 20,
+        include_online: bool = True,
     ) -> Dict[str, Any]:
         query = (query or "").strip()
         industry_id = industry_id or DEFAULT_INDUSTRY_ID
         if not query:
-            return {"query": query, "mode": "empty", "vector_indexed": False, "total": 0, "data": []}
+            return {
+                "query": query, "mode": "empty", "vector_indexed": False, "total": 0,
+                "online_total": 0, "online_kept": 0, "persisted": 0, "data": [],
+            }
 
         candidates: Dict[str, Dict[str, Any]] = {}
 
-        # ---- 1) 向量召回 ----
+        # ---- 1) 库内向量召回 ----
         vector_indexed = True
+        vec_hits: List[Tuple[str, float]] = []
         try:
             vec_hits = self.index.search(
                 industry_id, query, top_k=VECTOR_CANDIDATES, event_type=event_type
             )
         except Exception as e:
             logger.warning(f"[news_search] 向量召回失败，降级为关键词: {e}")
-            vec_hits = []
             vector_indexed = False
         for nid, score in vec_hits:
             candidates.setdefault(nid, {})["vector"] = score
 
-        # ---- 2) 关键词召回 ----
+        # ---- 2) 库内关键词召回 ----
         for nid in self._keyword_search(
             query, industry_id, event_type, impact_direction, KEYWORD_CANDIDATES
         ):
             candidates.setdefault(nid, {})["keyword"] = True
-            vector_indexed = vector_indexed and True  # 保持标记
 
-        if not candidates:
-            return {
-                "query": query,
-                "mode": "hybrid" if vector_indexed else "keyword",
-                "vector_indexed": vector_indexed,
-                "total": 0,
-                "data": [],
-            }
+        rows: List[IndustryNews] = []
+        if candidates:
+            ids = list(candidates.keys())
+            fetched = self.db.query(IndustryNews).filter(IndustryNews.id.in_(ids)).all()
+            rows = [
+                r for r in fetched
+                if (not industry_id or r.industry_id == industry_id)
+                and (not event_type or r.event_type == event_type)
+                and (not impact_direction or r.impact_direction == impact_direction)
+            ]
 
-        # ---- 3) 取回完整记录并做后置过滤 ----
-        ids = list(candidates.keys())
-        rows = self.db.query(IndustryNews).filter(IndustryNews.id.in_(ids)).all()
-        rows = [
-            r for r in rows
-            if (not industry_id or r.industry_id == industry_id)
-            and (not event_type or r.event_type == event_type)
-            and (not impact_direction or r.impact_direction == impact_direction)
-        ]
-        by_id = {str(r.id): r for r in rows}
+        # ---- 3) 全网实时检索（补库里没有的）----
+        online_items: List[Dict[str, Any]] = []
+        if include_online:
+            try:
+                online_items = self.live.search(query)
+            except Exception as e:
+                logger.warning(f"[news_search] 全网实时检索失败，仅返回库内结果: {e}")
+                online_items = []
 
-        # ---- 4) 重排 ----
-        ranked = self._rerank(query, rows)
+        # ---- 4) 统一重排（库内 + 全网一起排）----
+        docs: List[str] = []
+        meta: List[Tuple[str, Any, bool]] = []  # (kind, obj, keyword_hit)
+        for r in rows:
+            docs.append(_doc_text(r) or (r.title or ""))
+            meta.append(("lib", r, bool(candidates.get(str(r.id), {}).get("keyword"))))
+        for it in online_items:
+            text = _online_text(it)
+            docs.append(text)
+            meta.append(("web", it, _token_hit(query, text)))
+
+        if len(docs) > RERANK_MAX_DOCS:
+            docs = docs[:RERANK_MAX_DOCS]
+            meta = meta[:RERANK_MAX_DOCS]
+
+        ranked = self._rerank(query, docs) if docs else []
         used_rerank = ranked is not None
-        if not used_rerank:
-            # 退回融合分：向量分 + 关键词加成
-            ranked = []
-            for nid, meta in candidates.items():
-                row = by_id.get(nid)
-                if not row:
-                    continue
-                base = float(meta.get("vector", 0.0))
-                if meta.get("keyword"):
-                    base += 0.25
-                ranked.append((row, base))
-            ranked.sort(key=lambda x: x[1], reverse=True)
-            mode = "hybrid" if vec_hits else ("keyword" if not vector_indexed else "hybrid")
-        else:
+
+        scored: List[Tuple[str, Any, float, bool]] = []
+        if used_rerank:
+            for idx, score in ranked:
+                if 0 <= idx < len(meta):
+                    kind, obj, kw = meta[idx]
+                    scored.append((kind, obj, float(score), kw))
             mode = "rerank"
+        else:
+            for kind, obj, kw in meta:
+                if kind == "lib":
+                    m = candidates.get(str(obj.id), {})
+                    s = float(m.get("vector", 0.0)) + (0.25 if m.get("keyword") else 0.0)
+                else:
+                    s = 0.0  # 无 rerank 时全网结果仅靠关键词命中保留
+                scored.append((kind, obj, s, kw))
+            mode = "hybrid" if vec_hits else ("keyword" if not vector_indexed else "hybrid")
+
+        scored.sort(key=lambda x: x[2], reverse=True)
 
         # ---- 5) 组装结果（按相关度阈值过滤）----
-        # 仅 rerank 成功时启用阈值（量纲问题见 MIN_SCORE 注释）；
-        # 关键词精确命中的结果无论分数高低一律保留（精确匹配是强信号）。
         min_score = MIN_SCORE if used_rerank else 0.0
         data: List[Dict[str, Any]] = []
-        for row, score in ranked:
-            nid = str(row.id)
-            meta = candidates.get(nid, {})
-            s = float(score)
-            if s < min_score and not meta.get("keyword"):
+        web_kept: List[Dict[str, Any]] = []
+        for kind, obj, s, kw in scored:
+            # 阈值只挡"低分的非精确命中"；关键词精确命中是强信号，一律保留
+            if s < min_score and not kw:
                 continue
-            item = row.to_dict()
-            item["score"] = round(s, 4)
-            item["match_reason"] = self._reason(meta)
+            if kind == "lib":
+                item = obj.to_dict()
+                item["source_type"] = "library"
+                has_vec = "vector" in candidates.get(str(obj.id), {})
+                item["match_reason"] = (
+                    "关键词 + 语义相关" if (kw and has_vec) else ("关键词命中" if kw else "语义相关")
+                )
+            else:
+                item = dict(obj)
+                item["source_type"] = "web"
+                item["match_reason"] = "全网实时"
+            item["score"] = round(float(s), 4)
             data.append(item)
+            if kind == "web":
+                web_kept.append(item)
             if len(data) >= max(1, limit):
                 break
+
+        # ---- 6) 沉淀：把保留的全网结果入库 + 建索引（下次可被库内命中）----
+        persisted = 0
+        if web_kept and include_online:
+            mapping, persisted = self._persist_online(web_kept, industry_id)
+            for item in data:
+                if item.get("source_type") == "web":
+                    nid = mapping.get(item.get("source_url") or "")
+                    if nid:
+                        item["id"] = nid
 
         return {
             "query": query,
             "mode": mode,
             "vector_indexed": vector_indexed,
             "total": len(data),
+            "online_total": len(online_items),
+            "online_kept": len(web_kept),
+            "persisted": persisted,
             "data": data,
         }
 
@@ -208,15 +285,13 @@ class NewsSearchService:
         ).limit(limit)
         return [str(r[0]) for r in q.all()]
 
-    def _rerank(
-        self, query: str, rows: List[IndustryNews]
-    ) -> Optional[List[Tuple[IndustryNews, float]]]:
-        """DashScope 重排。任何异常都返回 None，由调用方退回融合分。
+    def _rerank(self, query: str, docs: List[str]) -> Optional[List[Tuple[int, float]]]:
+        """DashScope 重排。返回 [(doc_index, score), ...]（按分数降序）；失败返回 None。
 
         按 RERANK_MODELS 顺序尝试；一旦某个模型成功，记入 self._rerank_model，
         后续请求直接复用，避免每次都去撞已失效的模型。
         """
-        if not rows:
+        if not docs:
             return []
         api_key = os.getenv("DASHSCOPE_API_KEY")
         if not api_key:
@@ -228,8 +303,6 @@ class NewsSearchService:
             from http import HTTPStatus
 
             dashscope.api_key = api_key
-            texts = [_doc_text(r) or (r.title or "") for r in rows]
-
             for model in models:
                 if not model:
                     continue
@@ -237,8 +310,8 @@ class NewsSearchService:
                     resp = dashscope.TextReRank.call(
                         model=model,
                         query=query,
-                        documents=texts,
-                        top_n=len(texts),
+                        documents=docs,
+                        top_n=len(docs),
                         return_documents=False,
                     )
                 except Exception as e:
@@ -251,11 +324,12 @@ class NewsSearchService:
                     )
                     continue
                 self._rerank_model = model  # 记住可用模型
-                out: List[Tuple[IndustryNews, float]] = []
+                out: List[Tuple[int, float]] = []
                 for it in resp.output.results:
                     idx = it.get("index") if isinstance(it, dict) else it.index
                     score = it.get("relevance_score") if isinstance(it, dict) else it.relevance_score
-                    out.append((rows[idx], float(score)))
+                    out.append((int(idx), float(score)))
+                out.sort(key=lambda x: x[1], reverse=True)
                 return out
             logger.warning("[news_search] 所有 rerank 模型均不可用，退回融合分")
             return None
@@ -263,18 +337,77 @@ class NewsSearchService:
             logger.warning(f"[news_search] rerank 异常，退回融合分: {e}")
             return None
 
-    @staticmethod
-    def _reason(meta: Dict[str, Any]) -> str:
-        has_kw = bool(meta.get("keyword"))
-        has_vec = "vector" in meta
-        if has_kw and has_vec:
-            return "关键词 + 语义相关"
-        if has_kw:
-            return "关键词命中"
-        return "语义相关"
+    def _persist_online(
+        self, items: List[Dict[str, Any]], industry_id: str
+    ) -> Tuple[Dict[str, str], int]:
+        """把全网检索保留的结果沉淀入库并建索引。
 
+        Returns:
+            (url -> news_id 映射, 新入库条数)。任何异常都不抛出，仅记录日志，
+            保证沉淀失败不影响本次检索返回。
+        """
+        if not items:
+            return {}, 0
+        try:
+            from service.dedup_service import get_dedup_service
 
-_news_search_service = None
+            dedup = get_dedup_service()
+        except Exception:
+            dedup = None
+
+        mapping: Dict[str, str] = {}
+        created: List[IndustryNews] = []
+        for it in items:
+            url = it.get("source_url") or ""
+            if not url:
+                continue
+            existing = (
+                self.db.query(IndustryNews.id)
+                .filter(IndustryNews.source_url == url)
+                .first()
+            )
+            if existing:
+                mapping[url] = str(existing[0])
+                continue
+
+            title = (it.get("title") or "").strip() or "无标题"
+            content = it.get("content") or it.get("summary") or ""
+            fp = None
+            if dedup is not None:
+                try:
+                    fp = dedup.compute_fingerprint(title, content)
+                except Exception:
+                    fp = None
+            row = IndustryNews(
+                industry_id=industry_id,
+                title=title[:500],
+                content=content,
+                source=(it.get("source") or "")[:200],
+                source_url=url,
+                category="新闻",
+                publish_time=_parse_iso(it.get("publish_time")),
+                content_fingerprint=fp,
+                extraction_status="pending",
+                collected_at=datetime.utcnow(),
+            )
+            self.db.add(row)
+            created.append(row)
+
+        if not created:
+            return mapping, 0
+
+        try:
+            self.db.commit()
+            for r in created:
+                self.db.refresh(r)
+                mapping[r.source_url] = str(r.id)
+            self.index.index_news(created, industry_id=industry_id)
+            logger.info(f"[news_search] 已沉淀入库并建索引 {len(created)} 条全网资讯")
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(f"[news_search] 沉淀入库失败（不影响本次返回）: {e}")
+            return mapping, 0
+        return mapping, len(created)
 
 
 def get_news_search_service(db: Session) -> NewsSearchService:

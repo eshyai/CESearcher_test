@@ -251,6 +251,8 @@ class NewsSearchRequest(BaseModel):
     event_type: Optional[str] = None
     impact_direction: Optional[str] = None
     limit: int = 20
+    # 是否同时检索全网（默认开）：库内 + 全网一起给结果，一次搜索即可完成
+    include_online: bool = True
 
 
 class NewsSearchResponse(BaseModel):
@@ -261,24 +263,33 @@ class NewsSearchResponse(BaseModel):
     vector_indexed: bool
     total: int
     data: List[dict]
+    online_total: int = 0   # 全网检索命中（过滤后）条数
+    online_kept: int = 0    # 进入最终结果的全网条数
+    persisted: int = 0      # 本次沉淀新入库条数
 
 
 @router.post("/search", response_model=NewsSearchResponse)
-async def search_news(
+def search_news(
     payload: NewsSearchRequest,
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """碎片检索：输入公司/产品/工艺/政策片段等碎片信息，返回相关报道。
 
-    混合检索（向量语义召回 ∪ 关键词命中）+ Rerank 重排；
+    库内混合检索（向量语义召回 ∪ 关键词命中）+ 全网实时检索（博查）
+    → 一起 Rerank 重排 → 相关度阈值过滤；
     向量索引未建立时自动降级为纯关键词检索。
+    通过阈值的全网结果会沉淀入库，下次可被库内命中。
+
+    注意：定义为同步端点（def），FastAPI 会放入线程池执行；
+    因为全网检索使用同步 httpx，若用 async def 会阻塞事件循环。
     """
     from service.news_search_service import get_news_search_service
 
     logger.info(
         f"[news_router] search_news 请求: query='{payload.query[:40]}', "
-        f"industry_id={payload.industry_id}, event_type={payload.event_type}, limit={payload.limit}"
+        f"industry_id={payload.industry_id}, event_type={payload.event_type}, "
+        f"limit={payload.limit}, include_online={payload.include_online}"
     )
     service = get_news_search_service(db)
     result = service.search(
@@ -287,9 +298,11 @@ async def search_news(
         event_type=payload.event_type,
         impact_direction=payload.impact_direction,
         limit=payload.limit,
+        include_online=payload.include_online,
     )
     logger.info(
         f"[news_router] search_news 返回: mode={result['mode']}, total={result['total']}, "
+        f"online_kept={result.get('online_kept')}, persisted={result.get('persisted')}, "
         f"vector_indexed={result['vector_indexed']}"
     )
     return NewsSearchResponse(success=True, **result)
