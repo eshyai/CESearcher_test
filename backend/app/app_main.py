@@ -107,4 +107,5 @@ async def hello_world():
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # API_PORT 可覆盖（Windows 上 8000 可能被 Hyper-V/WSL 端口保留范围占用，报 winerror 10013）
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("API_PORT", "8000")))
