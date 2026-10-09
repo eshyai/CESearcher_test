@@ -33,6 +33,10 @@ export const errorToastPlugin: IRequestPlugin = {
         if (error instanceof CanceledError) return Promise.reject(error)
 
         const status = response?.status ?? ''
+
+        // 401 由 unauthorized 插件统一处理（清除登录态并跳转登录页），此处不重复提示
+        if (status === 401) return Promise.reject(error)
+
         const message =
           error instanceof ResponseError
             ? error.message

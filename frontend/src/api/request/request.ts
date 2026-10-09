@@ -5,6 +5,7 @@ import { loadingPlugin } from './plugins/loading'
 import { installPlugins } from './plugins/plugin'
 import { repeatPlugin } from './plugins/repeat'
 import { servicePlugin } from './plugins/service'
+import { unauthorizedPlugin } from './plugins/unauthorized'
 
 export function createRequest(configs: AxiosRequestConfig = {}) {
   const instance = axios.create(configs)
@@ -15,6 +16,7 @@ export function createRequest(configs: AxiosRequestConfig = {}) {
     loadingPlugin,
     repeatPlugin,
     errorToastPlugin,
+    unauthorizedPlugin,
   ])
 
   return instance
