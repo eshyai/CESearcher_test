@@ -19,6 +19,23 @@ export interface IndustryConfig {
 // 预定义的行业配置
 export const INDUSTRY_CONFIGS: IndustryConfig[] = [
   {
+    id: 'chemical',
+    name: '化工',
+    description: '石油化工、精细化工、化工新材料、危化品监管与双碳政策等领域',
+    newsKeywords: [
+      '化工 政策',
+      '危化品 监管',
+      '化工行业 产能',
+      '化工品 价格行情',
+      '化工 项目 投产',
+      '石化 装置 检修',
+      '化工 安全事故',
+      '双碳 化工',
+    ],
+    biddingKeywords: ['化工', '危化品', '石化工程', '化工园区', '化工设备', '环保治理'],
+    researchKeywords: ['化工', '石化', '危化品', '化工品价格'],
+  },
+  {
     id: 'smart_transportation',
     name: '智慧交通',
     description: '智能交通系统、车路协同、自动驾驶等领域',
@@ -122,14 +139,19 @@ export interface IndustryState {
   industries: IndustryConfig[]
 }
 
-// 从 localStorage 读取
+// 默认行业（化工资讯智能体为主场景）
+const DEFAULT_INDUSTRY_ID = 'chemical'
+
+// 从 localStorage 读取（校验有效性，避免残留的旧行业 id 导致空白）
 const getStoredIndustryId = (): string => {
   if (typeof window !== 'undefined') {
     const stored = localStorage.getItem('selected_industry_id')
     console.log('[industry store] 从 localStorage 读取行业:', stored)
-    return stored || 'smart_transportation'
+    if (stored && INDUSTRY_CONFIGS.some((i) => i.id === stored)) {
+      return stored
+    }
   }
-  return 'smart_transportation'
+  return DEFAULT_INDUSTRY_ID
 }
 
 // 创建状态

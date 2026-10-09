@@ -119,10 +119,34 @@ INDUSTRY_CONFIGS: Dict[str, IndustryConfig] = {
         ],
         research_keywords=["新能源", "碳中和", "储能", "智能电网"],
     ),
+    "chemical": IndustryConfig(
+        id="chemical",
+        name="化工",
+        description="石油化工、精细化工、化工新材料、危化品监管与双碳政策等领域",
+        news_keywords=[
+            "化工 政策",
+            "危化品 监管",
+            "化工行业 产能",
+            "化工品 价格行情",
+            "化工 项目 投产",
+            "石化 装置 检修",
+            "化工 安全事故",
+            "双碳 化工",
+        ],
+        bidding_keywords=[
+            "化工",
+            "危化品",
+            "石化工程",
+            "化工园区",
+            "化工设备",
+            "环保治理",
+        ],
+        research_keywords=["化工", "石化", "危化品", "化工品价格"],
+    ),
 }
 
-# 默认行业
-DEFAULT_INDUSTRY_ID = "smart_transportation"
+# 默认行业（化工资讯智能体为主场景）
+DEFAULT_INDUSTRY_ID = "chemical"
 
 
 def get_industry_config(industry_id: Optional[str] = None) -> IndustryConfig:

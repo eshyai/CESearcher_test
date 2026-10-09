@@ -8,6 +8,7 @@ import styles from './index.module.scss'
 
 // 行业卡片颜色配置
 const INDUSTRY_COLORS: Record<string, { color: string; bgColor: string }> = {
+  chemical: { color: '#B45309', bgColor: '#FFF7ED' },
   smart_transportation: { color: '#055588', bgColor: '#E7F4FF' },
   finance: { color: '#1144BA', bgColor: '#EFF3FF' },
   healthcare: { color: '#335519', bgColor: '#EDF7E6' },

@@ -190,7 +190,7 @@ class NewsCollectionService:
                             continue
 
                         news = IndustryNews(
-                            industry_id=industry_id or "smart_transportation",
+                            industry_id=industry_id or DEFAULT_INDUSTRY_ID,
                             title=title[:500] if title else '无标题',
                             content=content,
                             source=item.get('siteName', '') or self._extract_source_from_link(source_url),
@@ -318,7 +318,7 @@ class NewsCollectionService:
                             publish_time = self._parse_datetime(item.get("publish_time"))
 
                             bidding = BiddingInfo(
-                                industry_id=industry_id or "smart_transportation",
+                                industry_id=industry_id or DEFAULT_INDUSTRY_ID,
                                 bid_id=bid_id,
                                 title=item.get("title", "")[:500],
                                 notice_type=item.get("notice_type", "招标"),
@@ -370,7 +370,7 @@ class NewsCollectionService:
                             publish_time = self._parse_datetime(item.get("publish_time"))
 
                             bidding = BiddingInfo(
-                                industry_id=industry_id or "smart_transportation",
+                                industry_id=industry_id or DEFAULT_INDUSTRY_ID,
                                 bid_id=bid_id,
                                 title=item.get("title", "")[:500],
                                 notice_type=item.get("notice_type", "中标"),
