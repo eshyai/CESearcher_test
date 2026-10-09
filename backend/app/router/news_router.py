@@ -34,6 +34,7 @@ class CollectionResponse(BaseModel):
     news_collected: int = 0
     bidding_collected: int = 0
     duplicates_filtered: int = 0
+    low_quality_filtered: int = 0
     extraction: Optional[dict] = None
     errors: List[str] = []
 
@@ -160,6 +161,7 @@ async def trigger_collection(
             news_collected=news_result.get("collected", 0),
             bidding_collected=bidding_result.get("collected", 0),
             duplicates_filtered=news_result.get("duplicates_filtered", 0),
+            low_quality_filtered=news_result.get("low_quality_filtered", 0),
             extraction=extraction_result,
             errors=errors[:10]  # 只返回前10个错误
         )

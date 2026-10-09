@@ -7,6 +7,8 @@ export interface CollectionResult {
   message: string
   news_collected: number
   bidding_collected: number
+  duplicates_filtered?: number
+  low_quality_filtered?: number
   errors: string[]
 }
 
@@ -107,6 +109,12 @@ export default function CollectionModal({
                 <div className={styles.stats}>
                   <p>行业资讯：<strong>{result.news_collected}</strong> 条</p>
                   <p>招投标信息：<strong>{result.bidding_collected}</strong> 条</p>
+                  {!!result.low_quality_filtered && (
+                    <p>来源质量过滤：<strong>{result.low_quality_filtered}</strong> 条（文库/题库/低质聚合站）</p>
+                  )}
+                  {!!result.duplicates_filtered && (
+                    <p>近重复过滤：<strong>{result.duplicates_filtered}</strong> 条</p>
+                  )}
                   {result.errors.length > 0 && (
                     <div className={styles.errors}>
                       <p>错误信息：</p>

@@ -43,7 +43,17 @@ EVENT_TYPES = [
 
 IMPACT_DIRECTIONS = ["positive", "negative", "neutral"]
 
-MAX_CONCURRENCY = 3          # LLM 并发数
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    """读取整型环境变量，非法值回退默认"""
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= minimum else minimum
+    except (TypeError, ValueError):
+        return default
+
+
+# LLM 并发数（qwen-turbo 单条约 8-11s，并发越高整批越快；可用环境变量覆盖）
+MAX_CONCURRENCY = _env_int("NEWS_EXTRACT_CONCURRENCY", 6)
 MAX_CONTENT_CHARS = 1500     # 送入 LLM 的正文截断长度
 MAX_RETRIES = 2
 

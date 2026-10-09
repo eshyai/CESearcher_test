@@ -69,11 +69,42 @@ class BiddingService:
         "detail": "/queryBidDetail",     # 标书详情
     }
 
+    # 占位符特征：命中则视为"未配置"，避免用假 Key 打真实接口拿 403
+    _PLACEHOLDER_MARKERS = (
+        "your-", "your_", "xxx", "changeme", "change-me",
+        "replace", "placeholder", "todo", "<", "示例",
+    )
+
+    @classmethod
+    def _normalize_app_code(cls, raw: Optional[str]) -> str:
+        """把占位符/空白 Key 归一化为空串"""
+        value = (raw or "").strip()
+        if not value:
+            return ""
+        lowered = value.lower()
+        if any(marker in lowered for marker in cls._PLACEHOLDER_MARKERS):
+            return ""
+        return value
+
     def __init__(self):
-        self.app_code = os.getenv("BID_APP_CODE", "")
+        raw_app_code = os.getenv("BID_APP_CODE", "")
+        self.app_code = self._normalize_app_code(raw_app_code)
+        # 记录是否为占位符，便于上层给出更准确的提示
+        self.is_placeholder = bool(raw_app_code) and not self.app_code
 
         if not self.app_code:
-            print("警告: BID_APP_CODE 环境变量未设置")
+            if self.is_placeholder:
+                print(
+                    "提示: BID_APP_CODE 仍是占位符（未替换为阿里云市场真实 AppCode），"
+                    "招投标采集将自动跳过"
+                )
+            else:
+                print("警告: BID_APP_CODE 环境变量未设置，招投标采集将自动跳过")
+
+    @property
+    def configured(self) -> bool:
+        """招投标数据源是否真正可用"""
+        return bool(self.app_code)
 
     async def search_win_bids(
         self,

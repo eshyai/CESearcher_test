@@ -164,9 +164,12 @@ export default function NewsPage() {
     setCollecting(true)
 
     try {
+      // 手动采集按"小批快返"设计：LLM 抽取吞吐实测约 7s/条（端点限流，
+      // 加并发收益很小），24 条约 170s + 采集 35s，能稳定落在 300s 超时内。
+      // 需要更大批量请走 worker 定时任务（python app/worker_main.py --once）。
       const res = await api.news.triggerCollection({
-        max_news: 50,
-        max_bidding: 50,
+        max_news: 30,
+        max_bidding: 20,
         industry_id: currentIndustryId,
       })
 

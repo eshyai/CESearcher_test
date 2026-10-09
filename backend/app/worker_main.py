@@ -9,13 +9,19 @@
     python app/worker_main.py            # 常驻模式：每天定时执行完整管道
     python app/worker_main.py --once     # 单次执行完整管道后退出（调试用）
     python app/worker_main.py --once --max-news 10 --industry chemical
+    python app/worker_main.py --scan-low-quality                # 扫描低质来源（只读）
+    python app/worker_main.py --clean-low-quality               # 试算将删除多少条（不删）
+    python app/worker_main.py --clean-low-quality --yes         # 真正删除低质历史数据
 
 环境变量:
-    NEWS_WORKER_CRON_HOUR   定时执行的小时（24h 制，默认 12）
-    NEWS_EXTRACT_MODEL      抽取模型（默认 qwen-turbo）
+    NEWS_WORKER_CRON_HOUR     定时执行的小时（24h 制，默认 12）
+    NEWS_EXTRACT_MODEL        抽取模型（默认 qwen-turbo）
+    NEWS_EXTRACT_CONCURRENCY  LLM 抽取并发数（默认 6）
+    BOCHA_FRESHNESS           博查时间范围（默认 oneMonth；可选 oneDay/oneWeek/oneMonth/oneYear/noLimit）
 """
 import argparse
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
@@ -113,12 +119,38 @@ def main():
     parser.add_argument("--once", action="store_true", help="单次执行完整管道后退出")
     parser.add_argument("--backfill", action="store_true",
                         help="仅为历史数据补算去重指纹（迁移后执行一次），不触发采集")
+    parser.add_argument("--scan-low-quality", action="store_true",
+                        help="扫描已入库资讯中命中来源质量过滤规则的记录（只读，不删除）")
+    parser.add_argument("--clean-low-quality", action="store_true",
+                        help="删除已入库的低质来源资讯（需配合 --yes 才会真正删除）")
+    parser.add_argument("--yes", action="store_true",
+                        help="确认执行删除操作（不加则 clean-low-quality 为 dry-run）")
     parser.add_argument("--max-news", type=int, default=20, help="单次最大资讯采集数")
     parser.add_argument("--max-bidding", type=int, default=20, help="单次最大招投标采集数")
     parser.add_argument("--industry", type=str, default=None, help="行业ID（默认用配置）")
     args = parser.parse_args()
 
-    if args.backfill:
+    if args.scan_low_quality or args.clean_low_quality:
+        from core.database import SessionLocal
+        from service.news_collection_service import NewsCollectionService
+
+        db = SessionLocal()
+        try:
+            service = NewsCollectionService(db)
+            dry_run = not (args.clean_low_quality and args.yes)
+            if args.clean_low_quality:
+                result = service.clean_low_quality_news(
+                    industry_id=args.industry, dry_run=dry_run
+                )
+                mode = "DRY-RUN（未删除，加 --yes 才真正删除）" if dry_run else "已执行删除"
+                logger.info(f"低质资讯清理 {mode}: {result}")
+            else:
+                result = service.scan_low_quality_news(industry_id=args.industry)
+                logger.info(f"低质资讯扫描结果: {result}")
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        finally:
+            db.close()
+    elif args.backfill:
         from core.database import SessionLocal
         from service.dedup_service import get_dedup_service
 

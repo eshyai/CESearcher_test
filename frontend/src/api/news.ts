@@ -78,6 +78,14 @@ export interface CollectionResponse {
   message: string
   news_collected: number
   bidding_collected: number
+  duplicates_filtered?: number
+  low_quality_filtered?: number
+  extraction?: {
+    processed?: number
+    succeeded?: number
+    failed?: number
+    skipped?: string
+  } | null
   errors: string[]
 }
 
@@ -128,12 +136,12 @@ export const triggerCollection = async (params?: {
 }): Promise<CollectionResponse> => {
   // loading: false 禁用全局 loading，按钮已有自己的 loading 状态
   // cancelRepeat: false 禁用取消重复请求（采集是长时间操作）
-  // timeout: 120000 设置2分钟超时（采集需要较长时间）
+  // timeout: 300000 设置5分钟超时（采集+LLM抽取全流程实测约 170s，留足余量）
   const res = await request.post<CollectionResponse>('/news/collect', null, {
     params,
     loading: false,
     cancelRepeat: false,
-    timeout: 120000,
+    timeout: 300000,
   })
   return res.data
 }

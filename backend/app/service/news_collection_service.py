@@ -16,9 +16,20 @@ from sqlalchemy.orm import Session
 from models.news import IndustryNews, BiddingInfo, NewsCollectionTask, FocusTopic
 from service.bidding_service import get_bidding_service
 from service.dedup_service import get_dedup_service
-from config.industry_config import get_industry_config, get_all_industries
+from service.source_quality_service import get_source_quality_service
+from config.industry_config import (
+    get_industry_config,
+    get_all_industries,
+    DEFAULT_INDUSTRY_ID,
+)
 
 logger = logging.getLogger(__name__)
+
+# 博查搜索单次请求条数上限（配合质量过滤做「多取少留」）
+BOCHA_MAX_COUNT = 30
+# 博查时间范围过滤：默认为近一个月，显著降低陈旧 SEO 文档占比
+# 可选值：oneDay / oneWeek / oneMonth / oneYear / noLimit
+BOCHA_FRESHNESS = os.getenv("BOCHA_FRESHNESS", "oneMonth")
 
 
 class NewsCollectionService:
@@ -29,17 +40,22 @@ class NewsCollectionService:
         self.bocha_api_key = os.getenv("BOCHA_API_KEY", "")
         self.bidding_service = get_bidding_service()
         self.dedup = get_dedup_service()
+        self.quality = get_source_quality_service()
 
         if not self.bocha_api_key:
             logger.warning("BOCHA_API_KEY 环境变量未设置")
 
-    async def _bocha_search(self, query: str, count: int = 10) -> List[Dict]:
+    async def _bocha_search(
+        self, query: str, count: int = 10, freshness: Optional[str] = None
+    ) -> List[Dict]:
         """
         使用 Bocha API 进行搜索
 
         Args:
             query: 搜索关键词
             count: 返回数量
+            freshness: 时间范围（oneDay/oneWeek/oneMonth/oneYear）；
+                       None 时用全局 BOCHA_FRESHNESS 配置
 
         Returns:
             搜索结果列表
@@ -57,6 +73,9 @@ class NewsCollectionService:
             "count": count,
             "page": 1
         }
+        freshness_value = freshness if freshness is not None else BOCHA_FRESHNESS
+        if freshness_value and freshness_value.lower() != "nolimit":
+            payload["freshness"] = freshness_value
         headers = {
             'Authorization': f"Bearer {self.bocha_api_key}",
             'Content-Type': 'application/json'
@@ -132,9 +151,16 @@ class NewsCollectionService:
         collected = []
         errors = []
         duplicates = 0
+        low_quality_skipped = 0
 
         try:
             items_per_keyword = max(2, max_items // len(news_keywords))
+            # 质量过滤会丢弃相当比例结果（文档站/题库站），故按倍数多取，保证可用条数
+            fetch_count = min(max(items_per_keyword * 3, 15), BOCHA_MAX_COUNT)
+            logger.info(
+                f"[collect_news] 每关键词目标 {items_per_keyword} 条，"
+                f"实际请求 {fetch_count} 条（多取少留），freshness={BOCHA_FRESHNESS}"
+            )
 
             for keyword in news_keywords:
                 if len(collected) >= max_items:
@@ -142,7 +168,7 @@ class NewsCollectionService:
 
                 try:
                     # 使用Bocha搜索
-                    results = await self._bocha_search(keyword, count=items_per_keyword + 2)
+                    results = await self._bocha_search(keyword, count=fetch_count)
 
                     if not results:
                         errors.append(f"搜索 '{keyword}' 无结果")
@@ -157,6 +183,19 @@ class NewsCollectionService:
 
                         source_url = item.get('url', '')
                         if not source_url:
+                            continue
+
+                        # 来源质量过滤：黑名单域名 / 文档站 / 题库教育站 / 低质聚合
+                        # 必须在入库与 LLM 抽取之前拦截，避免污染知识库并浪费算力
+                        verdict = self.quality.check(
+                            source_url, title=item.get('title', '')
+                        )
+                        if not verdict.accepted:
+                            low_quality_skipped += 1
+                            logger.debug(
+                                f"[quality] 丢弃低质来源({verdict.reason}): "
+                                f"{item.get('title', '')[:40]}"
+                            )
                             continue
 
                         # 检查是否已存在（URL 精确去重）
@@ -225,13 +264,14 @@ class NewsCollectionService:
 
             logger.info(
                 f"[collect_news] 采集完成: 新增 {len(collected)} 条, "
-                f"去重过滤 {duplicates} 条"
+                f"来源质量过滤 {low_quality_skipped} 条, 近重复过滤 {duplicates} 条"
             )
 
             return {
                 "success": True,
                 "collected": len(collected),
                 "duplicates_filtered": duplicates,
+                "low_quality_filtered": low_quality_skipped,
                 "errors": errors
             }
 
@@ -441,14 +481,19 @@ class NewsCollectionService:
         news_result = await self.collect_news(max_news, industry_id, focus_user_id)
         logger.info(f"[NewsCollectionService] collect_news 结果: {news_result}")
 
-        # 检查招投标 API 是否可用
-        if not self.bidding_service.app_code:
-            logger.warning("[NewsCollectionService] 招投标 API 未配置，跳过招投标采集")
+        # 检查招投标 API 是否可用（占位符 Key 会被 BiddingService 归一化为空）
+        if not self.bidding_service.configured:
+            skip_reason = (
+                "BID_APP_CODE 仍是占位符，需在 backend/.env 填入阿里云市场真实 AppCode"
+                if getattr(self.bidding_service, "is_placeholder", False)
+                else "BID_APP_CODE 未配置"
+            )
+            logger.warning(f"[NewsCollectionService] 招投标 API 不可用，跳过采集（{skip_reason}）")
             bidding_result = {
                 "success": True,
                 "collected": 0,
                 "errors": [],
-                "skipped": "BID_APP_CODE 未配置"
+                "skipped": skip_reason,
             }
         else:
             bidding_result = await self.collect_bidding(max_bidding, industry_id)
@@ -461,6 +506,98 @@ class NewsCollectionService:
             "industry": industry_config.name
         }
         logger.info(f"[NewsCollectionService] collect_all 返回: {result}")
+        return result
+
+    # ---------- 历史低质数据清理 ----------
+
+    def scan_low_quality_news(self, industry_id: Optional[str] = None) -> Dict[str, Any]:
+        """扫描已入库资讯中命中质量过滤规则的记录（只读，不删除）
+
+        质量过滤器是后加的，历史数据里仍混有豆丁网/道客巴巴/题库站等低质来源，
+        需要一次性清理。本方法只统计，删除请用 clean_low_quality_news。
+
+        Returns:
+            {"total": 总条数, "low_quality": 命中条数, "by_domain": {...}, "samples": [...]}
+        """
+        query = self.db.query(IndustryNews)
+        if industry_id:
+            query = query.filter(IndustryNews.industry_id == industry_id)
+
+        total = 0
+        hits = []
+        by_domain: Dict[str, int] = {}
+        by_reason: Dict[str, int] = {}
+
+        for news in query.yield_per(500):
+            total += 1
+            verdict = self.quality.check(news.source_url or "", title=news.title or "")
+            if verdict.accepted:
+                continue
+            hits.append(news)
+            by_domain[verdict.host or "unknown"] = by_domain.get(verdict.host or "unknown", 0) + 1
+            key = verdict.reason.split("(")[0]
+            by_reason[key] = by_reason.get(key, 0) + 1
+
+        samples = [
+            {"id": n.id, "title": (n.title or "")[:60], "url": n.source_url}
+            for n in hits[:10]
+        ]
+        return {
+            "total": total,
+            "low_quality": len(hits),
+            "by_domain": dict(sorted(by_domain.items(), key=lambda kv: -kv[1])),
+            "by_reason": by_reason,
+            "samples": samples,
+        }
+
+    def clean_low_quality_news(
+        self, industry_id: Optional[str] = None, dry_run: bool = True
+    ) -> Dict[str, Any]:
+        """删除已入库的低质来源资讯
+
+        Args:
+            industry_id: 限定行业；None 表示全部行业
+            dry_run: True 只统计不删除（默认）
+
+        Returns:
+            统计结果，dry_run=True 时含 samples
+        """
+        scan = self.scan_low_quality_news(industry_id)
+        result = {
+            "success": True,
+            "dry_run": dry_run,
+            "total": scan["total"],
+            "low_quality": scan["low_quality"],
+            "by_domain": scan["by_domain"],
+            "by_reason": scan["by_reason"],
+            "deleted": 0,
+        }
+
+        if dry_run:
+            result["samples"] = scan["samples"]
+            logger.info(
+                f"[clean_low_quality] DRY-RUN: 共 {scan['total']} 条，"
+                f"命中低质 {scan['low_quality']} 条（未删除）"
+            )
+            return result
+
+        query = self.db.query(IndustryNews)
+        if industry_id:
+            query = query.filter(IndustryNews.industry_id == industry_id)
+
+        deleted = 0
+        for news in query.yield_per(500):
+            if self.quality.check(news.source_url or "", title=news.title or "").accepted:
+                continue
+            self.db.delete(news)
+            deleted += 1
+
+        self.db.commit()
+        result["deleted"] = deleted
+        logger.info(
+            f"[clean_low_quality] 已删除低质资讯 {deleted} 条"
+            f"（行业={industry_id or '全部'}）"
+        )
         return result
 
     def get_news_list(
