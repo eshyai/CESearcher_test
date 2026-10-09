@@ -42,6 +42,8 @@ class CollectionResponse(BaseModel):
 async def get_news_list(
     category: Optional[str] = Query(None, description="分类：政策/研报/新闻"),
     industry_id: Optional[str] = Query(None, description="行业ID"),
+    event_type: Optional[str] = Query(None, description="事件类型：投产扩产/停产检修/价格变动/政策发布/安全事故/环保处罚/并购融资/技术突破/招投标/其他"),
+    impact_direction: Optional[str] = Query(None, description="影响方向：positive/negative/neutral"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: Optional[User] = Depends(get_current_user),
@@ -50,10 +52,11 @@ async def get_news_list(
     """
     获取行业资讯列表
     """
-    logger.info(f"[news_router] get_news_list 请求: category={category}, industry_id={industry_id}, limit={limit}, offset={offset}")
+    logger.info(f"[news_router] get_news_list 请求: category={category}, industry_id={industry_id}, event_type={event_type}, impact={impact_direction}, limit={limit}, offset={offset}")
     service = get_news_collection_service(db)
     items, filtered_total = service.get_news_list(
         category=category, industry_id=industry_id,
+        event_type=event_type, impact_direction=impact_direction,
         user_id=current_user.id if current_user else None,
         limit=limit, offset=offset)
     stats = service.get_news_stats(industry_id=industry_id)

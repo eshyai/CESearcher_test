@@ -565,10 +565,20 @@ class NewsCollectionService:
             recent_query = recent_query.filter(IndustryNews.industry_id == industry_id)
         recent_count = recent_query.count()
 
+        # 按事件类型统计（LLM 抽取结果）
+        event_query = self.db.query(
+            IndustryNews.event_type,
+            func.count(IndustryNews.id).label("count")
+        )
+        if industry_id:
+            event_query = event_query.filter(IndustryNews.industry_id == industry_id)
+        event_stats = event_query.group_by(IndustryNews.event_type).all()
+
         return {
             "total": total,
             "recent_24h": recent_count,
-            "by_category": {cat: cnt for cat, cnt in category_stats if cat}
+            "by_category": {cat: cnt for cat, cnt in category_stats if cat},
+            "by_event_type": {evt: cnt for evt, cnt in event_stats if evt}
         }
 
     def get_bidding_stats(self, industry_id: Optional[str] = None) -> Dict[str, Any]:

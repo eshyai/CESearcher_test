@@ -43,6 +43,47 @@ const NEWS_CATEGORIES = [
   { label: '新闻', value: '新闻' },
 ]
 
+// LLM 抽取的事件类型（与后端 event_type 枚举对齐）
+const EVENT_TYPE_OPTIONS = [
+  { label: '投产扩产', value: '投产扩产' },
+  { label: '停产检修', value: '停产检修' },
+  { label: '价格变动', value: '价格变动' },
+  { label: '政策发布', value: '政策发布' },
+  { label: '安全事故', value: '安全事故' },
+  { label: '环保处罚', value: '环保处罚' },
+  { label: '并购融资', value: '并购融资' },
+  { label: '技术突破', value: '技术突破' },
+  { label: '招投标', value: '招投标' },
+  { label: '其他', value: '其他' },
+]
+
+// 事件类型标签配色
+const EVENT_TYPE_COLORS: Record<string, string> = {
+  投产扩产: 'green',
+  停产检修: 'volcano',
+  价格变动: 'gold',
+  政策发布: 'blue',
+  安全事故: 'red',
+  环保处罚: 'magenta',
+  并购融资: 'purple',
+  技术突破: 'cyan',
+  招投标: 'geekblue',
+  其他: 'default',
+}
+
+// 影响方向：按国内习惯，利好=红、利空=绿、中性=灰
+const IMPACT_META: Record<string, { label: string; color: string }> = {
+  positive: { label: '利好', color: '#cf1322' },
+  negative: { label: '利空', color: '#389e0d' },
+  neutral: { label: '中性', color: '#8c8c8c' },
+}
+
+const IMPACT_OPTIONS = [
+  { label: '利好', value: 'positive' },
+  { label: '利空', value: 'negative' },
+  { label: '中性', value: 'neutral' },
+]
+
 export default function NewsPage() {
   const navigate = useNavigate()
   const { isLoggedIn } = useSnapshot(authState)
@@ -88,7 +129,7 @@ export default function NewsPage() {
     } finally {
       setNewsLoading(false)
     }
-  }, [newsCategory, newsPage, currentIndustryId])
+  }, [newsCategory, newsEventType, newsImpact, newsPage, currentIndustryId])
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -323,8 +364,30 @@ export default function NewsPage() {
                 <div className={styles['news-title']}>
                   {item.title}
                 </div>
-                {item.content && (
-                  <div className={styles['news-content']}>{item.content}</div>
+                {/* 事件化标签：事件类型 + 影响方向 + 关键数字 */}
+                {(item.event_type || item.impact_direction || item.key_numbers?.length) && (
+                  <div className={styles['news-tags']}>
+                    {item.event_type && (
+                      <Tag color={EVENT_TYPE_COLORS[item.event_type] || 'default'}>
+                        {item.event_type}
+                      </Tag>
+                    )}
+                    {item.impact_direction && IMPACT_META[item.impact_direction] && (
+                      <Tag color={IMPACT_META[item.impact_direction].color}>
+                        {IMPACT_META[item.impact_direction].label}
+                      </Tag>
+                    )}
+                    {item.key_numbers?.slice(0, 4).map((n, i) => (
+                      <Tag key={i} bordered={false}>
+                        {n.name}
+                        {n.value}
+                        {n.unit || ''}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+                {(item.summary || item.content) && (
+                  <div className={styles['news-content']}>{item.summary || item.content}</div>
                 )}
                 <div className={styles['news-meta']}>
                   <span className={styles['meta-item']}>

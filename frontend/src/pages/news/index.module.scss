@@ -104,6 +104,14 @@
       }
     }
 
+    .news-tags {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
     .news-content {
       font-size: 14px;
       color: #595959;

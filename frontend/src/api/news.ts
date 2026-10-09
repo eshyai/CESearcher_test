@@ -21,6 +21,15 @@ export interface NewsItem {
     relevant: boolean | null
     note?: string | null
   } | null
+  // ===== LLM 结构化抽取结果 =====
+  is_duplicate?: boolean
+  extracted_topics?: Array<{ type: string; name: string }>
+  event_type?: string | null
+  impact_direction?: 'positive' | 'negative' | 'neutral' | null
+  key_numbers?: Array<{ name: string; value: string | number; unit?: string }>
+  entities?: string[]
+  summary?: string | null
+  extraction_status?: 'pending' | 'completed' | 'failed' | string
 }
 
 export interface BiddingItem {
@@ -76,6 +85,8 @@ export interface CollectionResponse {
 export const getNewsList = async (params?: {
   category?: string
   industry_id?: string
+  event_type?: string
+  impact_direction?: string
   limit?: number
   offset?: number
 }): Promise<NewsListResponse> => {
