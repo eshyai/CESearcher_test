@@ -111,12 +111,24 @@ def _make_scheduled_job(args):
 def main():
     parser = argparse.ArgumentParser(description="化工资讯采集 Worker")
     parser.add_argument("--once", action="store_true", help="单次执行完整管道后退出")
+    parser.add_argument("--backfill", action="store_true",
+                        help="仅为历史数据补算去重指纹（迁移后执行一次），不触发采集")
     parser.add_argument("--max-news", type=int, default=20, help="单次最大资讯采集数")
     parser.add_argument("--max-bidding", type=int, default=20, help="单次最大招投标采集数")
     parser.add_argument("--industry", type=str, default=None, help="行业ID（默认用配置）")
     args = parser.parse_args()
 
-    if args.once:
+    if args.backfill:
+        from core.database import SessionLocal
+        from service.dedup_service import get_dedup_service
+
+        db = SessionLocal()
+        try:
+            result = get_dedup_service().backfill_fingerprints(db)
+            logger.info(f"指纹回填完成: {result}")
+        finally:
+            db.close()
+    elif args.once:
         asyncio.run(run_pipeline_once(args))
     else:
         try:

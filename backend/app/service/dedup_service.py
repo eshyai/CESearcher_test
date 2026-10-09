@@ -218,8 +218,38 @@ class NewsDedupService:
         except Exception as e:
             return {"total": -1, "with_fingerprint": -1, "error": str(e)}
 
+    def backfill_fingerprints(self, db: Session, batch_size: int = 500) -> dict:
+        """
+        为历史数据补算指纹（迁移/升级后执行一次）。
 
-# 模块级单例（jieba 分词器初始化较重，避免重复加载）
+        只处理 content_fingerprint 为空的记录；分批提交避免长事务。
+        可重复执行（幂等）。
+        """
+        from models.news import IndustryNews
+
+        filled = 0
+        scanned = 0
+        while True:
+            rows = (
+                db.query(IndustryNews)
+                .filter(IndustryNews.content_fingerprint.is_(None))
+                .limit(batch_size)
+                .all()
+            )
+            if not rows:
+                break
+            for news in rows:
+                news.content_fingerprint = self.compute_fingerprint(
+                    news.title, news.content or ""
+                )
+                filled += 1
+            db.commit()
+            scanned += len(rows)
+            logger.info(f"[backfill] 已补算 {scanned} 条指纹")
+        return {"filled": filled}
+
+
+# 模块级单例（避免重复实例化）
 _dedup_service: Optional[NewsDedupService] = None
 
 
