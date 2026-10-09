@@ -12,11 +12,15 @@
     python app/worker_main.py --scan-low-quality                # 扫描低质来源（只读）
     python app/worker_main.py --clean-low-quality               # 试算将删除多少条（不删）
     python app/worker_main.py --clean-low-quality --yes         # 真正删除低质历史数据
+    python app/worker_main.py --reindex-news                    # 全量重建资讯向量索引（碎片检索用）
+    python app/worker_main.py --index-news                      # 增量补齐未入索引的资讯
 
 环境变量:
     NEWS_WORKER_CRON_HOUR     定时执行的小时（24h 制，默认 12）
     NEWS_EXTRACT_MODEL        抽取模型（默认 qwen-turbo）
     NEWS_EXTRACT_CONCURRENCY  LLM 抽取并发数（默认 6）
+    NEWS_EMBED_MODEL          资讯向量化模型（默认 text-embedding-v4）
+    NEWS_RERANK_MODEL         检索重排模型（默认 gte-rerank）
     BOCHA_FRESHNESS           博查时间范围（默认 oneMonth；可选 oneDay/oneWeek/oneMonth/oneYear/noLimit）
 """
 import argparse
@@ -125,12 +129,33 @@ def main():
                         help="删除已入库的低质来源资讯（需配合 --yes 才会真正删除）")
     parser.add_argument("--yes", action="store_true",
                         help="确认执行删除操作（不加则 clean-low-quality 为 dry-run）")
+    parser.add_argument("--reindex-news", action="store_true",
+                        help="全量重建资讯向量索引（先清空再写入，供碎片检索）")
+    parser.add_argument("--index-news", action="store_true",
+                        help="增量补齐：只索引已完成抽取但尚未入向量库的资讯")
     parser.add_argument("--max-news", type=int, default=20, help="单次最大资讯采集数")
     parser.add_argument("--max-bidding", type=int, default=20, help="单次最大招投标采集数")
     parser.add_argument("--industry", type=str, default=None, help="行业ID（默认用配置）")
     args = parser.parse_args()
 
-    if args.scan_low_quality or args.clean_low_quality:
+    if args.reindex_news or args.index_news:
+        from core.database import SessionLocal
+        from service.news_index_service import get_news_index_service
+
+        db = SessionLocal()
+        try:
+            svc = get_news_index_service()
+            if args.reindex_news:
+                result = svc.reindex_industry(db, industry_id=args.industry)
+                logger.info(f"资讯向量索引全量重建完成: {result}")
+            else:
+                result = svc.index_missing(db, industry_id=args.industry)
+                logger.info(f"资讯向量索引增量补齐完成: {result}")
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            print(json.dumps(svc.stats(args.industry), ensure_ascii=False, indent=2))
+        finally:
+            db.close()
+    elif args.scan_low_quality or args.clean_low_quality:
         from core.database import SessionLocal
         from service.news_collection_service import NewsCollectionService
 

@@ -68,9 +68,24 @@ async def run_full_pipeline(
         else:
             extraction_result["skipped"] = "采集失败，跳过抽取"
 
+        # ---- 阶段 3: 向量索引（把新抽取完成的资讯写入 Milvus，供「碎片检索」）----
+        index_result: dict = {"indexed": 0}
+        if extraction_result.get("succeeded"):
+            try:
+                # 延迟导入：Milvus 不可用时不应影响采集/抽取主流程
+                from service.news_index_service import get_news_index_service
+
+                index_result = get_news_index_service().index_missing(db, industry_id=industry_id)
+            except Exception as e:
+                logger.error(f"[pipeline] 向量索引阶段失败（不影响采集结果）: {e}")
+                index_result = {"indexed": 0, "error": str(e)}
+        else:
+            index_result["skipped"] = "本轮无新抽取完成记录"
+
         result = {
             "collection": collection_result,
             "extraction": extraction_result,
+            "index": index_result,
         }
         logger.info(f"[pipeline] 管道执行完成: {result}")
         return result

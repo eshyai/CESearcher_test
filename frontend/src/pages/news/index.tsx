@@ -103,6 +103,13 @@ export default function NewsPage() {
   const [topicName, setTopicName] = useState('')
   const [topicType, setTopicType] = useState<FocusTopic['topic_type']>('industry')
 
+  // 碎片检索状态（searchQuery 非空 = 处于检索模式）
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<NewsItem[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchMeta, setSearchMeta] = useState<{ mode: string; vectorIndexed: boolean } | null>(null)
+
   // 采集状态
   const [collecting, setCollecting] = useState(false)
   const [collectionModalOpen, setCollectionModalOpen] = useState(false)
@@ -141,6 +148,45 @@ export default function NewsPage() {
       api.news.getFocusTopics().then(setFocusTopics).catch(() => undefined)
     }
   }, [isLoggedIn, fetchNews])
+
+  // 碎片检索：输入公司/产品/工艺/政策片段 -> 相关报道
+  const doSearch = useCallback(
+    async (raw: string) => {
+      const q = raw.trim()
+      if (!q) {
+        // 清空即退出检索模式，回到常规列表
+        setSearchQuery('')
+        setSearchResults([])
+        setSearchMeta(null)
+        return
+      }
+      setSearchQuery(q)
+      setSearchLoading(true)
+      try {
+        const res = await api.news.searchNews({
+          query: q,
+          industry_id: currentIndustryId,
+          limit: 20,
+        })
+        setSearchResults(res.data)
+        setSearchMeta({ mode: res.mode, vectorIndexed: res.vector_indexed })
+      } catch (error: any) {
+        console.error('[NewsPage] doSearch 错误:', error)
+        message.error(error?.response?.data?.detail || '检索失败')
+        setSearchResults([])
+      } finally {
+        setSearchLoading(false)
+      }
+    },
+    [currentIndustryId],
+  )
+
+  const exitSearch = () => {
+    setSearchInput('')
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchMeta(null)
+  }
 
   const handleCreateTopic = async () => {
     const name = topicName.trim()
@@ -220,6 +266,108 @@ export default function NewsPage() {
     }
   }
 
+  // 资讯卡片（常规列表与检索结果共用；showScore 时额外展示相关度与命中理由）
+  const renderNewsItem = (item: NewsItem, showScore = false) => (
+    <div
+      key={item.id}
+      className={styles['news-item']}
+      onClick={() => openLink(item.source_url)}
+    >
+      <div className={styles['news-title']}>{item.title}</div>
+      {showScore && item.score !== undefined && (
+        <div className={styles['news-tags']}>
+          <Tag color="green">相关度 {item.score.toFixed(3)}</Tag>
+          {item.match_reason && <Tag bordered={false}>{item.match_reason}</Tag>}
+        </div>
+      )}
+      {/* 事件化标签：事件类型 + 影响方向 + 关键数字 */}
+      {(item.event_type || item.impact_direction || item.key_numbers?.length) && (
+        <div className={styles['news-tags']}>
+          {item.event_type && (
+            <Tag color={EVENT_TYPE_COLORS[item.event_type] || 'default'}>{item.event_type}</Tag>
+          )}
+          {item.impact_direction && IMPACT_META[item.impact_direction] && (
+            <Tag color={IMPACT_META[item.impact_direction].color}>
+              {IMPACT_META[item.impact_direction].label}
+            </Tag>
+          )}
+          {item.key_numbers?.slice(0, 4).map((n, i) => (
+            <Tag key={i} bordered={false}>
+              {n.name}
+              {n.value}
+              {n.unit || ''}
+            </Tag>
+          ))}
+        </div>
+      )}
+      {(item.summary || item.content) && (
+        <div className={styles['news-content']}>{item.summary || item.content}</div>
+      )}
+      <div className={styles['news-meta']}>
+        <span className={styles['meta-item']}>
+          <ClockCircleOutlined />
+          {formatTime(item.publish_time || item.collected_at)}
+        </span>
+        {item.department && (
+          <span className={styles['meta-item']}>
+            <BankOutlined />
+            {item.department}
+          </span>
+        )}
+        <span className={styles['meta-item']}>
+          <LinkOutlined />
+          {item.source || '未知来源'}
+        </span>
+        <Tag
+          color={
+            item.category === '政策' ? 'blue' : item.category === '研报' ? 'purple' : 'default'
+          }
+        >
+          {item.category || '新闻'}
+        </Tag>
+        {item.matched_topics?.map((topic) => (
+          <Tag color="geekblue" key={topic}>
+            {topic}
+          </Tag>
+        ))}
+        <span className={styles['feedback-actions']}>
+          <Button
+            size="small"
+            type={item.feedback?.interested === true ? 'primary' : 'default'}
+            icon={<LikeOutlined />}
+            onClick={(e) => handleFeedback(e, item, { interested: true })}
+          >
+            感兴趣
+          </Button>
+          <Button
+            size="small"
+            danger={item.feedback?.interested === false}
+            icon={<DislikeOutlined />}
+            onClick={(e) => handleFeedback(e, item, { interested: false })}
+          >
+            不感兴趣
+          </Button>
+          <Button
+            size="small"
+            type={item.feedback?.relevant === true ? 'primary' : 'default'}
+            icon={<CheckCircleOutlined />}
+            onClick={(e) => handleFeedback(e, item, { relevant: true })}
+          >
+            相关
+          </Button>
+          <Button
+            size="small"
+            danger={item.feedback?.relevant === false}
+            icon={<CloseCircleOutlined />}
+            onClick={(e) => handleFeedback(e, item, { relevant: false })}
+          >
+            不相关
+          </Button>
+        </span>
+      </div>
+    </div>
+  )
+
   const handleFeedback = async (
     event: React.MouseEvent,
     item: NewsItem,
@@ -238,6 +386,8 @@ export default function NewsPage() {
       message.error(error?.response?.data?.detail || '反馈保存失败')
     }
   }
+
+  const isSearchMode = searchQuery.trim() !== ''
 
   if (!isLoggedIn) {
     return (
@@ -272,6 +422,38 @@ export default function NewsPage() {
         </div>
       </div>
 
+      {/* 碎片检索：输入公司/产品/工艺/政策片段，得到相关报道 */}
+      <Card size="small" style={{ marginBottom: 16 }} className={styles['search-card']}>
+        <Input.Search
+          size="large"
+          allowClear
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onSearch={doSearch}
+          enterButton="检索"
+          loading={searchLoading}
+          placeholder="输入公司 / 产品 / 工艺 / 政策片段… 例如：万华化学 MDI 扩产、危化品监管新规"
+        />
+        {searchQuery && searchMeta && (
+          <div className={styles['search-summary']}>
+            <span>
+              关键词「<strong>{searchQuery}</strong>」找到 <strong>{searchResults.length}</strong> 条相关报道
+            </span>
+            <Tag color={searchMeta.mode === 'rerank' ? 'green' : 'blue'}>
+              {searchMeta.mode === 'rerank'
+                ? '语义 + 关键词重排'
+                : searchMeta.mode === 'hybrid'
+                ? '混合检索'
+                : '关键词检索'}
+            </Tag>
+            {!searchMeta.vectorIndexed && <Tag color="orange">向量索引未就绪，已降级为关键词</Tag>}
+            <Button type="link" size="small" onClick={exitSearch}>
+              返回列表
+            </Button>
+          </div>
+        )}
+      </Card>
+
       <Card size="small" style={{ marginBottom: 16 }} title="关注主题">
         <Space wrap>
           <Select value={topicType} onChange={setTopicType} style={{ width: 110 }} options={[
@@ -289,7 +471,8 @@ export default function NewsPage() {
       </Card>
 
       <Card>
-        {/* 统计信息 */}
+        {/* 统计信息（检索模式下隐藏，聚焦结果） */}
+        {!isSearchMode && (
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={6}>
             <Card size="small">
@@ -328,8 +511,10 @@ export default function NewsPage() {
             </Card>
           </Col>
         </Row>
+        )}
 
-        {/* 分类筛选 */}
+        {/* 分类筛选（检索模式下隐藏） */}
+        {!isSearchMode && (
         <div className={styles.filters}>
           <div className={styles['category-tags']}>
             {NEWS_CATEGORIES.map((cat) => (
@@ -372,9 +557,26 @@ export default function NewsPage() {
             />
           </div>
         </div>
+        )}
 
-        {/* 资讯列表 */}
-        {newsLoading ? (
+        {/* 检索结果 / 资讯列表 */}
+        {isSearchMode ? (
+          searchLoading ? (
+            <div className={styles['news-list']}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className={styles['news-item']}>
+                  <Skeleton active paragraph={{ rows: 3 }} />
+                </div>
+              ))}
+            </div>
+          ) : searchResults.length === 0 ? (
+            <Empty description={`没有找到与「${searchQuery}」相关的报道`} />
+          ) : (
+            <div className={styles['news-list']}>
+              {searchResults.map((item) => renderNewsItem(item, true))}
+            </div>
+          )
+        ) : newsLoading ? (
           <div className={styles['news-list']}>
             {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className={styles['news-item']}>
@@ -386,87 +588,12 @@ export default function NewsPage() {
           <Empty description="暂无资讯" />
         ) : (
           <div className={styles['news-list']}>
-            {newsList.map((item) => (
-              <div
-                key={item.id}
-                className={styles['news-item']}
-                onClick={() => openLink(item.source_url)}
-              >
-                <div className={styles['news-title']}>
-                  {item.title}
-                </div>
-                {/* 事件化标签：事件类型 + 影响方向 + 关键数字 */}
-                {(item.event_type || item.impact_direction || item.key_numbers?.length) && (
-                  <div className={styles['news-tags']}>
-                    {item.event_type && (
-                      <Tag color={EVENT_TYPE_COLORS[item.event_type] || 'default'}>
-                        {item.event_type}
-                      </Tag>
-                    )}
-                    {item.impact_direction && IMPACT_META[item.impact_direction] && (
-                      <Tag color={IMPACT_META[item.impact_direction].color}>
-                        {IMPACT_META[item.impact_direction].label}
-                      </Tag>
-                    )}
-                    {item.key_numbers?.slice(0, 4).map((n, i) => (
-                      <Tag key={i} bordered={false}>
-                        {n.name}
-                        {n.value}
-                        {n.unit || ''}
-                      </Tag>
-                    ))}
-                  </div>
-                )}
-                {(item.summary || item.content) && (
-                  <div className={styles['news-content']}>{item.summary || item.content}</div>
-                )}
-                <div className={styles['news-meta']}>
-                  <span className={styles['meta-item']}>
-                    <ClockCircleOutlined />
-                    {formatTime(item.publish_time || item.collected_at)}
-                  </span>
-                  {item.department && (
-                    <span className={styles['meta-item']}>
-                      <BankOutlined />
-                      {item.department}
-                    </span>
-                  )}
-                  <span className={styles['meta-item']}>
-                    <LinkOutlined />
-                    {item.source || '未知来源'}
-                  </span>
-                  <Tag
-                    color={
-                      item.category === '政策'
-                        ? 'blue'
-                        : item.category === '研报'
-                        ? 'purple'
-                        : 'default'
-                    }
-                  >
-                    {item.category || '新闻'}
-                  </Tag>
-                  {item.matched_topics?.map((topic) => (
-                    <Tag color="geekblue" key={topic}>{topic}</Tag>
-                  ))}
-                  <span className={styles['feedback-actions']}>
-                    <Button size="small" type={item.feedback?.interested === true ? 'primary' : 'default'}
-                      icon={<LikeOutlined />} onClick={(e) => handleFeedback(e, item, { interested: true })}>感兴趣</Button>
-                    <Button size="small" danger={item.feedback?.interested === false}
-                      icon={<DislikeOutlined />} onClick={(e) => handleFeedback(e, item, { interested: false })}>不感兴趣</Button>
-                    <Button size="small" type={item.feedback?.relevant === true ? 'primary' : 'default'}
-                      icon={<CheckCircleOutlined />} onClick={(e) => handleFeedback(e, item, { relevant: true })}>相关</Button>
-                    <Button size="small" danger={item.feedback?.relevant === false}
-                      icon={<CloseCircleOutlined />} onClick={(e) => handleFeedback(e, item, { relevant: false })}>不相关</Button>
-                  </span>
-                </div>
-              </div>
-            ))}
+            {newsList.map((item) => renderNewsItem(item))}
           </div>
         )}
 
-        {/* 分页 */}
-        {newsTotal > pageSize && (
+        {/* 分页（检索模式无分页） */}
+        {!isSearchMode && newsTotal > pageSize && (
           <div className={styles['pagination-wrapper']}>
             <Pagination
               current={newsPage}

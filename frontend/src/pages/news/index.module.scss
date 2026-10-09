@@ -207,6 +207,18 @@
   margin-left: auto;
 }
 
+.search-card {
+  .search-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    font-size: 13px;
+    opacity: 0.85;
+  }
+}
+
 .event-filters {
   display: flex;
   gap: 12px;

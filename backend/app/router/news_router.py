@@ -242,3 +242,54 @@ async def get_industry(industry_id: str):
             "bidding_keywords": config.bidding_keywords,
         }
     }
+
+
+class NewsSearchRequest(BaseModel):
+    """碎片检索请求"""
+    query: str
+    industry_id: Optional[str] = None
+    event_type: Optional[str] = None
+    impact_direction: Optional[str] = None
+    limit: int = 20
+
+
+class NewsSearchResponse(BaseModel):
+    """碎片检索响应"""
+    success: bool
+    query: str
+    mode: str
+    vector_indexed: bool
+    total: int
+    data: List[dict]
+
+
+@router.post("/search", response_model=NewsSearchResponse)
+async def search_news(
+    payload: NewsSearchRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """碎片检索：输入公司/产品/工艺/政策片段等碎片信息，返回相关报道。
+
+    混合检索（向量语义召回 ∪ 关键词命中）+ Rerank 重排；
+    向量索引未建立时自动降级为纯关键词检索。
+    """
+    from service.news_search_service import get_news_search_service
+
+    logger.info(
+        f"[news_router] search_news 请求: query='{payload.query[:40]}', "
+        f"industry_id={payload.industry_id}, event_type={payload.event_type}, limit={payload.limit}"
+    )
+    service = get_news_search_service(db)
+    result = service.search(
+        query=payload.query,
+        industry_id=payload.industry_id,
+        event_type=payload.event_type,
+        impact_direction=payload.impact_direction,
+        limit=payload.limit,
+    )
+    logger.info(
+        f"[news_router] search_news 返回: mode={result['mode']}, total={result['total']}, "
+        f"vector_indexed={result['vector_indexed']}"
+    )
+    return NewsSearchResponse(success=True, **result)

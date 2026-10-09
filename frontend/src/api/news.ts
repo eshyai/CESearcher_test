@@ -30,6 +30,9 @@ export interface NewsItem {
   entities?: string[]
   summary?: string | null
   extraction_status?: 'pending' | 'completed' | 'failed' | string
+  // ===== 碎片检索结果附加字段 =====
+  score?: number
+  match_reason?: string
 }
 
 export interface BiddingItem {
@@ -100,6 +103,31 @@ export const getNewsList = async (params?: {
 }): Promise<NewsListResponse> => {
   // loading: false 禁用全局 loading，使用页面的骨架屏
   const res = await request.get<NewsListResponse>('/news/list', { params, loading: false })
+  return res.data
+}
+
+// 碎片检索：输入公司/产品/工艺/政策片段等，返回相关报道（向量语义 ∪ 关键词 + rerank）
+export interface NewsSearchResponse {
+  success: boolean
+  query: string
+  mode: string
+  vector_indexed: boolean
+  total: number
+  data: NewsItem[]
+}
+
+export const searchNews = async (params: {
+  query: string
+  industry_id?: string
+  event_type?: string
+  impact_direction?: string
+  limit?: number
+}): Promise<NewsSearchResponse> => {
+  // loading: false 用页面自己的检索态；cancelRepeat: false 避免快速连续检索被取消
+  const res = await request.post<NewsSearchResponse>('/news/search', params, {
+    loading: false,
+    cancelRepeat: false,
+  })
   return res.data
 }
 
