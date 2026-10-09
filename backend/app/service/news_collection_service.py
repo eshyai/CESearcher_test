@@ -467,6 +467,8 @@ class NewsCollectionService:
         self,
         category: Optional[str] = None,
         industry_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        impact_direction: Optional[str] = None,
         user_id=None,
         limit: int = 20,
         offset: int = 0
@@ -480,6 +482,14 @@ class NewsCollectionService:
 
         if category:
             query = query.filter(IndustryNews.category == category)
+
+        # 按 LLM 抽取的事件类型筛选（化工资讯核心维度）
+        if event_type:
+            query = query.filter(IndustryNews.event_type == event_type)
+
+        # 按影响方向筛选：positive/negative/neutral
+        if impact_direction:
+            query = query.filter(IndustryNews.impact_direction == impact_direction)
 
         # 先获取筛选后的总数
         filtered_total = query.count()
