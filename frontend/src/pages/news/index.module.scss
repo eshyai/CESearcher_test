@@ -207,6 +207,13 @@
   margin-left: auto;
 }
 
+.event-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .category-tags {
   display: flex;
   gap: 8px;

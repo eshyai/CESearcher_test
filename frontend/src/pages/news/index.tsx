@@ -94,6 +94,8 @@ export default function NewsPage() {
   const [newsList, setNewsList] = useState<NewsItem[]>([])
   const [newsLoading, setNewsLoading] = useState(false)
   const [newsCategory, setNewsCategory] = useState('')
+  const [newsEventType, setNewsEventType] = useState<string | undefined>(undefined)
+  const [newsImpact, setNewsImpact] = useState<string | undefined>(undefined)
   const [newsPage, setNewsPage] = useState(1)
   const [newsTotal, setNewsTotal] = useState(0)
   const [newsStats, setNewsStats] = useState<NewsStats | null>(null)
@@ -114,6 +116,8 @@ export default function NewsPage() {
     try {
       const res = await api.news.getNewsList({
         category: newsCategory || undefined,
+        event_type: newsEventType,
+        impact_direction: newsImpact,
         industry_id: currentIndustryId,
         limit: pageSize,
         offset: (newsPage - 1) * pageSize,
@@ -339,6 +343,30 @@ export default function NewsPage() {
                 {cat.label}
               </span>
             ))}
+          </div>
+          <div className={styles['event-filters']}>
+            <Select
+              allowClear
+              placeholder="事件类型"
+              style={{ width: 150 }}
+              value={newsEventType}
+              options={EVENT_TYPE_OPTIONS}
+              onChange={(value) => {
+                setNewsEventType(value)
+                setNewsPage(1)
+              }}
+            />
+            <Select
+              allowClear
+              placeholder="影响方向"
+              style={{ width: 130 }}
+              value={newsImpact}
+              options={IMPACT_OPTIONS}
+              onChange={(value) => {
+                setNewsImpact(value)
+                setNewsPage(1)
+              }}
+            />
           </div>
         </div>
 
