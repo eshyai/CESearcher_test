@@ -1,0 +1,22 @@
+# 换行符规范化（Windows 开发机 core.autocrlf=true，但脚本/配置必须保持 LF）
+#
+# 说明：本项目在 Windows 上开发（autocrlf=true），部署到 Linux 服务器。
+# 若 shell 脚本被检出成 CRLF，在 Linux 上会报 "bad interpreter: /bin/bash^M"。
+# 因此对下列文件强制 LF，与 core.autocrlf 设置无关。
+#
+# 只针对脚本与配置文件；不声明 `* text=auto`，避免对前端大量文件触发一次性的全量重规范化。
+
+*.sh            text eol=lf
+*.bash          text eol=lf
+compose.sh      text eol=lf
+start-services.sh text eol=lf
+
+# 容器与反向代理配置
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+*.dockerignore  text eol=lf
+docker-compose*.yml text eol=lf
+*.conf          text eol=lf
+
+# 数据库初始化脚本（容器内 psql 执行，CRLF 会混入 SQL）
+*.sql           text eol=lf

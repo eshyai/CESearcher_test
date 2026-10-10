@@ -1,0 +1,21 @@
+FROM python:3.13-slim
+
+# 开发模式镜像：只装依赖，代码由 compose 通过 bind mount 挂载进来。
+# 好处：改代码不会触发 rebuild，容器内 --reload 秒级生效。
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    TZ=Asia/Shanghai \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY requirements.docker.txt /app/requirements.docker.txt
+RUN pip install --no-cache-dir -r /app/requirements.docker.txt
+
+EXPOSE 8200
+
+# --reload-dir /app 明确监听挂载进来的目录
+CMD ["uvicorn", "app_main:app", "--host", "0.0.0.0", "--port", "8200", "--reload", "--reload-dir", "/app"]

@@ -1,0 +1,81 @@
+# ============================================================
+# 生产模式：代码固化进镜像 + 自动重启
+# 用于部署到服务器（7×24 常驻，脱离终端）。
+#
+# 构建：IMAGE_TAG=v0.4 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+# 启动：IMAGE_TAG=v0.4 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 停止：docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+# 回滚：把 IMAGE_TAG 换成上一个可用版本重新 up -d 即可
+#
+# 注意：本文件不含开发用的 bind mount，容器内改代码不会生效，
+#       必须重新 build。日常改功能请用 docker-compose.dev.yml。
+# ============================================================
+
+services:
+  backend:
+    build:
+      context: ./backend/app
+      dockerfile: Dockerfile
+    image: chemical-agent-backend:${IMAGE_TAG:-latest}
+    container_name: industry_backend
+    restart: always
+    env_file:
+      - ./backend/.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      API_PORT: "8200"
+      ENABLE_EMBEDDED_SCHEDULER: "false"
+    ports:
+      - "8200:8200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    networks:
+      - industry_network
+
+  # 采集 Worker：常驻进程，每天定时跑「采集 → 去重 → LLM 抽取 → 入向量索引」
+  worker:
+    build:
+      context: ./backend/app
+      dockerfile: Dockerfile
+    image: chemical-agent-backend:${IMAGE_TAG:-latest}
+    container_name: industry_worker
+    restart: always
+    env_file:
+      - ./backend/.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      TZ: Asia/Shanghai
+    command: ["python", "worker_main.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    networks:
+      - industry_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: chemical-agent-frontend:${IMAGE_TAG:-latest}
+    container_name: industry_frontend
+    restart: always
+    ports:
+      # 对外端口，服务器上按需改，默认沿用开发时的 5183
+      - "${WEB_PORT:-5183}:80"
+    depends_on:
+      - backend
+    networks:
+      - industry_network

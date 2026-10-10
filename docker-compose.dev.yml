@@ -1,0 +1,65 @@
+# ============================================================
+# 开发模式：源码挂载 + 热重载
+# 与 docker-compose.yml（中间件）叠加使用，日常开发用这个。
+#
+# 启动：docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# 停止：docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+#
+# 改代码 / 改前端组件：保存即生效，不需要 rebuild。
+# 改 backend/.env：docker compose ... up -d backend 让它重启即可。
+# 改依赖清单：docker compose ... build backend frontend
+# ============================================================
+
+services:
+  backend:
+    build:
+      context: ./backend/app
+      dockerfile: Dockerfile.dev
+    image: chemical-agent-backend:dev
+    container_name: industry_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # 容器内服务名互访；覆盖 env_file 里面向宿主机的 localhost
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      API_PORT: "8200"
+      # 采集调度由独立 worker 承担，开发时不要内嵌到 API 进程
+      ENABLE_EMBEDDED_SCHEDULER: "false"
+    ports:
+      - "8200:8200"
+    volumes:
+      # 只挂代码目录，site-packages 留在镜像里不受影响
+      - ./backend/app:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    networks:
+      - industry_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    image: chemical-agent-frontend:dev
+    container_name: industry_frontend
+    restart: unless-stopped
+    ports:
+      - "5183:5183"
+    volumes:
+      # 源码挂载；node_modules 用命名卷隔离（首次启动会从镜像里带出来）
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - industry_network
+
+volumes:
+  frontend_node_modules:

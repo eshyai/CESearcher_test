@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+
+# 本地环境变量不进入镜像（容器通过 compose env_file 注入）
+.env
+.env.*
+!.env.example
+
+# 测试与一次性脚本、历史备份、生成的图表
+test/
+backups/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+
+# 日志与缓存
+*.log
+logs/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.git/
+.gitignore
+.dockerignore

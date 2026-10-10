@@ -1,27 +1,25 @@
-FROM python:3.11.7-slim
+FROM python:3.13-slim
 
-# 设置工作目录
+# 与本地 .venv（Python 3.13.15）保持同一大版本，避免依赖解析差异
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    TZ=Asia/Shanghai \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 WORKDIR /app
 
-# 设置环境变量
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-# 设置Python模块搜索路径
-ENV PYTHONPATH=/
+# 依赖单独占一层：只要 requirements.docker.txt 不变，
+# 后续修改业务代码时 build 会直接命中缓存，不会重装依赖。
+COPY requirements.docker.txt /app/requirements.docker.txt
+RUN pip install --no-cache-dir -r /app/requirements.docker.txt
 
-
-# 配置pip使用清华镜像源
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
-    && pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
-
-# 复制代码到容器
+# 业务代码后置，改代码只让这一层失效
 COPY . /app/
 
-# 安装依赖
-RUN pip install --no-cache-dir -r requirements.txt
+EXPOSE 8200
 
-# 暴露端口
-EXPOSE 8000
-
-# 启动命令
-CMD ["uvicorn", "app_main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 生产模式：不使用 --reload
+CMD ["uvicorn", "app_main:app", "--host", "0.0.0.0", "--port", "8200"]
