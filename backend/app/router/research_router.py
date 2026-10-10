@@ -9,6 +9,10 @@ from service import ResearchService, ServiceConfig
 from service.dr_g import serialize_event  # 导入序列化函数
 from core.redis_client import cache  # 导入 Redis 缓存
 
+# 鉴权：本地知识库检索按用户隔离，必须拿到调用者身份
+from models.user import User
+from router.auth_router import get_current_user
+
 # V2 导入
 from service.deep_research_v2.service import DeepResearchV2Service
 
@@ -77,6 +81,7 @@ def get_research_service_v2():
 @router.post("/stream", status_code=HTTP_200_OK)
 async def stream_research(
     request: ResearchRequest,
+    current_user: Optional[User] = Depends(get_current_user),
     services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
@@ -108,6 +113,7 @@ async def stream_research(
                     query=request.query,
                     session_id=request.session_id,
                     kb_name=request.kb_name,
+                    user_id=str(current_user.id) if current_user else None,
                     search_web=search_web,
                     search_local=search_local
                 ):
@@ -154,6 +160,7 @@ async def stream_research_get(
     search_web: bool = Query(True, description="是否搜索网络"),
     search_local: bool = Query(True, description="是否搜索本地知识库"),
     version: str = Query("v1", description="版本: v1 或 v2"),
+    current_user: Optional[User] = Depends(get_current_user),
     services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
@@ -183,7 +190,10 @@ async def stream_research_get(
             try:
                 async for event in service_v2.research(
                     query=query,
-                    kb_name=kb_name
+                    kb_name=kb_name,
+                    user_id=str(current_user.id) if current_user else None,
+                    search_web=search_web,
+                    search_local=search_local
                 ):
                     yield event
             except Exception as e:

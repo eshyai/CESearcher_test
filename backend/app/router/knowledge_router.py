@@ -7,13 +7,17 @@ from datetime import datetime
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from pydantic import BaseModel
 
 from core.database import get_db
 from models.knowledge import KnowledgeBase, Document, KnowledgeBaseMember, KnowledgeAuditLog
 from models.user import User
 from router.auth_router import get_current_user_required
+from service.kb_access_service import (
+    accessible_knowledge_bases,
+    kb_collection_name,
+    resolve_collection_for_read,
+)
 from schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseUpdate,
@@ -111,8 +115,8 @@ def doc_to_response(doc: Document) -> DocumentResponse:
     )
 
 
-async def process_document(document_id: str, file_path: str, kb_name: str, db_session_factory):
-    """后台处理文档（使用 DocMind 解析、向量化、存储到ES）"""
+async def process_document(document_id: str, file_path: str, db_session_factory):
+    """后台处理文档（使用 DocMind 解析、向量化、存储到ES/Milvus）"""
     from service.docmind_service import process_document_with_docmind
 
     # 创建新的数据库会话
@@ -128,8 +132,18 @@ async def process_document(document_id: str, file_path: str, kb_name: str, db_se
         db.commit()
 
         try:
-            # 使用知识库名称作为ES索引名
-            index_name = f"kb_{kb_name}".lower().replace(" ", "_")
+            # 集合名按知识库 UUID 生成（全局唯一）。
+            # 历史实现用 kb_{知识库名}，而重名校验只查同一用户，
+            # 不同用户建同名库会写进同一个集合、数据互相串——
+            # 详见 service/kb_access_service.py 的说明。
+            kb = db.query(KnowledgeBase).filter(
+                KnowledgeBase.id == doc.knowledge_base_id).first()
+            if not kb:
+                doc.status = "failed"
+                doc.error_message = "知识库不存在"
+                db.commit()
+                return
+            index_name = kb_collection_name(kb)
 
             # 使用 DocMind 处理文档
             result = process_document_with_docmind(
@@ -167,17 +181,11 @@ async def get_knowledge_bases(
     """获取用户的知识库列表
 
     可见范围 = 自己创建的 ∪ 显式加入的成员库 ∪ visibility=team 的部门共享库。
+    规则集中在 service/kb_access_service，检索侧与列表接口共用同一套口径。
     """
     memberships = {m.knowledge_base_id: m.role for m in db.query(KnowledgeBaseMember).filter(
         KnowledgeBaseMember.user_id == current_user.id).all()}
-    conds = [KnowledgeBase.user_id == current_user.id]
-    if memberships:
-        conds.append(KnowledgeBase.id.in_(list(memberships.keys())))
-    conds.append(KnowledgeBase.visibility == "team")
-    kbs = db.query(KnowledgeBase).filter(
-        KnowledgeBase.deleted_at.is_(None),
-        or_(*conds),
-    ).order_by(KnowledgeBase.updated_at.desc()).all()
+    kbs = accessible_knowledge_bases(db, current_user.id)
 
     def _role_of(kb: KnowledgeBase) -> str:
         if kb.user_id == current_user.id:
@@ -406,7 +414,6 @@ async def upload_document(
         process_document,
         str(doc.id),
         file_path,
-        kb.name,
         SessionLocal
     )
 
@@ -485,13 +492,13 @@ async def get_document_chunks(
             detail="文档尚未处理完成"
         )
 
-    # 从 Milvus 获取切片
-    collection_name = f"kb_{kb.name}".lower().replace(" ", "_")
+    # 从 Milvus 获取切片：新命名 kb_{uuid} 优先，回退历史 kb_{名称}
+    milvus = get_milvus_service()
+    collection_name = resolve_collection_for_read(milvus, kb)
     print(f"[get_document_chunks] 查询切片: collection={collection_name}, filename={doc.filename}")
 
     try:
-        milvus = get_milvus_service()
-        chunks = milvus.get_chunks_by_filename(collection_name, doc.filename)
+        chunks = milvus.get_chunks_by_filename(collection_name, doc.filename) if collection_name else []
         print(f"[get_document_chunks] 找到 {len(chunks)} 个切片")
     except Exception as e:
         print(f"[get_document_chunks] Milvus 查询失败: {e}")

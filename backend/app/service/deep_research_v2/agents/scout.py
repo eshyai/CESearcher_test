@@ -180,6 +180,8 @@ URL: {url}
         self.search_api_key = search_api_key
         self.search_cache: Dict[str, List] = {}
         self.fact_fingerprints: Dict[str, str] = {}  # 事实指纹用于去重
+        # 用户可见知识库集合缓存：{user_id: {collection_name: kb_name}}
+        self._kb_collection_cache: Dict[str, Dict[str, str]] = {}
 
         # 初始化本地知识库搜索服务
         self.milvus_service = None
@@ -590,9 +592,11 @@ URL: {url}
                         "searchType": "web"
                     })
 
-            # 本地知识库搜索
+            # 本地知识库搜索（按当前用户可见范围隔离）
             if search_local:
-                local_results = await self._execute_local_search(query)
+                local_results = await self._execute_local_search(
+                    query, user_id=state.get("_user_id")
+                )
                 all_results.extend(local_results)
 
                 if local_results:
@@ -999,19 +1003,64 @@ URL: {url}
 
         return self.parse_json_response(response)
 
-    async def _execute_local_search(self, query: str, top_k: int = 10) -> List[Dict]:
+    def _resolve_allowed_collections(self, user_id: str) -> Dict[str, str]:
+        """解析当前用户可检索的 Milvus 集合 → {集合名: 知识库名}。
+
+        结果按用户缓存（同一次研究内多次检索不重复查库）。
+        任何异常都降级为「空可见范围」，即不检索本地库——失败要保守。
+        """
+        if user_id in self._kb_collection_cache:
+            return self._kb_collection_cache[user_id]
+
+        mapping: Dict[str, str] = {}
+        try:
+            from core.database import SessionLocal
+            from service.kb_access_service import accessible_knowledge_bases, kb_collection_candidates
+
+            db = SessionLocal()
+            try:
+                for kb in accessible_knowledge_bases(db, user_id):
+                    for coll in kb_collection_candidates(kb):
+                        mapping[coll] = kb.name
+            finally:
+                db.close()
+        except Exception as e:
+            self.logger.warning(f"[scout] 解析可见知识库失败，降级为不检索本地库: {e}")
+            mapping = {}
+
+        self._kb_collection_cache[user_id] = mapping
+        self.logger.info(
+            f"[scout] 可见知识库集合: user={user_id}, "
+            f"collections={sorted(mapping.keys()) or '[]'}"
+        )
+        return mapping
+
+    async def _execute_local_search(
+        self, query: str, top_k: int = 10, user_id: Optional[str] = None
+    ) -> List[Dict]:
         """
         执行本地知识库搜索 - 使用 Milvus 向量检索
+
+        **可见范围隔离**：只检索当前用户在 `kb_access_service` 中可见的知识库
+        对应的集合。历史实现枚举全部 `kb_*` 集合，多用户场景下 A 的私有库
+        会进入 B 的回答，属 P0 级越权。缺少用户上下文时一律跳过（宁可少检索）。
 
         Args:
             query: 搜索查询
             top_k: 返回结果数量
+            user_id: 当前用户 ID（决定可见知识库范围）
 
         Returns:
             搜索结果列表
         """
         if not self.milvus_service or not MILVUS_AVAILABLE:
             self.logger.warning("Milvus service not available for local search")
+            return []
+
+        if not user_id:
+            self.logger.warning(
+                "[scout] 本地知识库检索缺少用户上下文，已跳过（避免跨用户串库）"
+            )
             return []
 
         try:
@@ -1023,24 +1072,23 @@ URL: {url}
 
             self.logger.info(f"Executing local knowledge base search: {query[:50]}...")
 
-            # 知识库文档实际写入的集合名是 kb_{知识库名}（见 router/knowledge_router.py
-            # 的 process_document → docmind_service.process_document_with_docmind，
-            # 其中 index_name 即 Milvus 集合名），并不是固定的 "knowledge_base"。
-            # 因此这里枚举所有 kb_ 前缀集合（并兼容历史遗留的 knowledge_base）逐个检索
-            # 再按相似度合并；否则用户上传的文档永远检索不到。
+            # 知识库文档实际写入的集合名 = kb_{知识库 UUID}（见
+            # service/kb_access_service.kb_collection_name），历史数据在
+            # kb_{知识库名} 里，两种候选名都由 allowed_kb_collections 一并给出。
+            allowed = self._resolve_allowed_collections(user_id)
+            if not allowed:
+                self.logger.info(f"[scout] 用户无可见知识库，跳过本地检索")
+                return []
+
             try:
                 from pymilvus import utility as _milvus_utility
-
-                kb_collections = [
-                    c for c in _milvus_utility.list_collections()
-                    if c == "knowledge_base" or c.startswith("kb_")
-                ]
+                kb_collections = [c for c in allowed if _milvus_utility.has_collection(c)]
             except Exception as e:
-                self.logger.warning(f"List Milvus collections failed: {e}")
-                kb_collections = ["knowledge_base"]
+                self.logger.warning(f"Check Milvus collections failed: {e}")
+                return []
 
             if not kb_collections:
-                self.logger.info("No knowledge base collection found, skip local search")
+                self.logger.info("No accessible knowledge base collection found, skip local search")
                 return []
 
             merged: List[Dict] = []
@@ -1065,19 +1113,22 @@ URL: {url}
             # 格式化结果为与网络搜索一致的格式
             formatted_results = []
             for r in results:
+                coll = r.get('_collection') or ''
+                kb_name = allowed.get(coll, '')
                 formatted_results.append({
-                    'url': f"local://kb/{r.get('kb_id', 'unknown')}/{r.get('doc_id', 'unknown')}",
+                    'url': f"local://kb/{coll}/{r.get('doc_id', 'unknown')}",
                     'title': r.get('filename', 'N/A'),
                     'summary': r.get('content', '')[:500],
                     'snippet': r.get('content', '')[:200],
-                    'site_name': f"本地知识库",
+                    'site_name': f"本地知识库·{kb_name}" if kb_name else "本地知识库",
                     'date': '',
                     'score': r.get('score', 0),
                     'is_local': True,
                     'kb_id': r.get('kb_id'),
+                    'kb_name': kb_name,
                     'doc_id': r.get('doc_id'),
                     'chunk_index': r.get('chunk_index'),
-                    'kb_collection': r.get('_collection'),
+                    'kb_collection': coll,
                 })
 
             self.logger.info(f"Local search returned {len(formatted_results)} results for: {query[:30]}...")
