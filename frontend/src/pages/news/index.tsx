@@ -12,15 +12,13 @@ import {
   Col,
   Input,
   Select,
-  Space,
+  Switch,
 } from 'antd'
 import {
   FileTextOutlined,
-  ReloadOutlined,
   ClockCircleOutlined,
   BankOutlined,
   LinkOutlined,
-  SyncOutlined,
   LikeOutlined,
   DislikeOutlined,
   CheckCircleOutlined,
@@ -31,8 +29,7 @@ import { authState } from '@/store/auth'
 import { industryState, getCurrentIndustry } from '@/store/industry'
 import { useNavigate } from 'react-router-dom'
 import * as api from '@/api'
-import type { FocusTopic, NewsItem, NewsStats } from '@/api/news'
-import CollectionModal, { CollectionResult } from '@/components/collection-modal'
+import type { NewsItem, NewsStats } from '@/api/news'
 import styles from './index.module.scss'
 
 // 资讯分类
@@ -71,18 +68,8 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   其他: 'default',
 }
 
-// 影响方向：按国内习惯，利好=红、利空=绿、中性=灰
-const IMPACT_META: Record<string, { label: string; color: string }> = {
-  positive: { label: '利好', color: '#cf1322' },
-  negative: { label: '利空', color: '#389e0d' },
-  neutral: { label: '中性', color: '#8c8c8c' },
-}
-
-const IMPACT_OPTIONS = [
-  { label: '利好', value: 'positive' },
-  { label: '利空', value: 'negative' },
-  { label: '中性', value: 'neutral' },
-]
+// 注：影响方向（利好/利空/中性）是投资者视角，产品面向化工从业者，已从界面移除。
+// 后端 industry_news.impact_direction 字段与抽取逻辑保留，前端不再展示与筛选。
 
 export default function NewsPage() {
   const navigate = useNavigate()
@@ -95,13 +82,9 @@ export default function NewsPage() {
   const [newsLoading, setNewsLoading] = useState(false)
   const [newsCategory, setNewsCategory] = useState('')
   const [newsEventType, setNewsEventType] = useState<string | undefined>(undefined)
-  const [newsImpact, setNewsImpact] = useState<string | undefined>(undefined)
   const [newsPage, setNewsPage] = useState(1)
   const [newsTotal, setNewsTotal] = useState(0)
   const [newsStats, setNewsStats] = useState<NewsStats | null>(null)
-  const [focusTopics, setFocusTopics] = useState<FocusTopic[]>([])
-  const [topicName, setTopicName] = useState('')
-  const [topicType, setTopicType] = useState<FocusTopic['topic_type']>('industry')
 
   // 碎片检索状态（searchQuery 非空 = 处于检索模式）
   const [searchInput, setSearchInput] = useState('')
@@ -117,11 +100,6 @@ export default function NewsPage() {
   // 是否同时检索全网（默认开）：一次搜索即可拿到库里没有的最新资讯，并把优质结果沉淀入库
   const [includeOnline, setIncludeOnline] = useState(true)
 
-  // 采集状态
-  const [collecting, setCollecting] = useState(false)
-  const [collectionModalOpen, setCollectionModalOpen] = useState(false)
-  const [collectionResult, setCollectionResult] = useState<CollectionResult | null>(null)
-
   const pageSize = 20
 
   // 获取资讯列表
@@ -131,7 +109,6 @@ export default function NewsPage() {
       const res = await api.news.getNewsList({
         category: newsCategory || undefined,
         event_type: newsEventType,
-        impact_direction: newsImpact,
         industry_id: currentIndustryId,
         limit: pageSize,
         offset: (newsPage - 1) * pageSize,
@@ -147,12 +124,11 @@ export default function NewsPage() {
     } finally {
       setNewsLoading(false)
     }
-  }, [newsCategory, newsEventType, newsImpact, newsPage, currentIndustryId])
+  }, [newsCategory, newsEventType, newsPage, currentIndustryId])
 
   useEffect(() => {
     if (isLoggedIn) {
       fetchNews()
-      api.news.getFocusTopics().then(setFocusTopics).catch(() => undefined)
     }
   }, [isLoggedIn, fetchNews])
 
@@ -205,66 +181,6 @@ export default function NewsPage() {
     setSearchMeta(null)
   }
 
-  const handleCreateTopic = async () => {
-    const name = topicName.trim()
-    if (!name) return
-    try {
-      const topic = await api.news.createFocusTopic({ topic_type: topicType, name, query_text: name })
-      setFocusTopics((items) => [topic, ...items])
-      setTopicName('')
-      message.success('关注主题已添加')
-      await fetchNews()
-    } catch (error: any) {
-      message.error(error?.response?.data?.detail || '添加关注主题失败')
-    }
-  }
-
-  // 手动触发采集
-  const handleCollect = async () => {
-    // 打开模态框
-    setCollectionModalOpen(true)
-    setCollectionResult(null)
-    setCollecting(true)
-
-    try {
-      // 手动采集按"小批快返"设计：LLM 抽取吞吐实测约 7s/条（端点限流，
-      // 加并发收益很小），24 条约 170s + 采集 35s，能稳定落在 300s 超时内。
-      // 需要更大批量请走 worker 定时任务（python app/worker_main.py --once）。
-      const res = await api.news.triggerCollection({
-        max_news: 30,
-        max_bidding: 20,
-        industry_id: currentIndustryId,
-      })
-
-      // 设置结果
-      setCollectionResult(res)
-
-      // 刷新数据
-      if (res.success) {
-        await fetchNews()
-      }
-    } catch (error: any) {
-      console.error('[NewsPage] handleCollect 错误:', error)
-      setCollectionResult({
-        success: false,
-        message: '采集失败',
-        news_collected: 0,
-        bidding_collected: 0,
-        errors: [error?.message || '网络请求失败'],
-      })
-    } finally {
-      setCollecting(false)
-    }
-  }
-
-  // 关闭模态框
-  const handleCloseModal = () => {
-    if (!collecting) {
-      setCollectionModalOpen(false)
-      setCollectionResult(null)
-    }
-  }
-
   // 格式化时间
   const formatTime = (timeStr: string) => {
     if (!timeStr) return '-'
@@ -302,16 +218,11 @@ export default function NewsPage() {
           {item.match_reason && <Tag bordered={false}>{item.match_reason}</Tag>}
         </div>
       )}
-      {/* 事件化标签：事件类型 + 影响方向 + 关键数字 */}
-      {(item.event_type || item.impact_direction || item.key_numbers?.length) && (
+      {/* 事件化标签：事件类型 + 关键数字 */}
+      {(item.event_type || item.key_numbers?.length) && (
         <div className={styles['news-tags']}>
           {item.event_type && (
             <Tag color={EVENT_TYPE_COLORS[item.event_type] || 'default'}>{item.event_type}</Tag>
-          )}
-          {item.impact_direction && IMPACT_META[item.impact_direction] && (
-            <Tag color={IMPACT_META[item.impact_direction].color}>
-              {IMPACT_META[item.impact_direction].label}
-            </Tag>
           )}
           {item.key_numbers?.slice(0, 4).map((n, i) => (
             <Tag key={i} bordered={false}>
@@ -397,13 +308,9 @@ export default function NewsPage() {
   ) => {
     event.stopPropagation()
     try {
-      const result = await api.news.submitNewsFeedback(item.id, payload) as { updated_topics?: FocusTopic[] }
-      if (result.updated_topics?.length) {
-        const updates = new Map(result.updated_topics.map((topic) => [topic.id, topic]))
-        setFocusTopics((items) => items.map((topic) => updates.get(topic.id) || topic))
-      }
+      await api.news.submitNewsFeedback(item.id, payload)
       await fetchNews()
-      message.success('反馈已记录，关注权重已更新')
+      message.success('反馈已记录，将用于优化推荐')
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '反馈保存失败')
     }
@@ -432,16 +339,6 @@ export default function NewsPage() {
           <h2>行业资讯</h2>
           <Tag color="purple" style={{ marginLeft: 12 }}>{currentIndustry.name}</Tag>
         </div>
-        <div className={styles['header-right']}>
-          <Button
-            type="primary"
-            icon={collecting ? <SyncOutlined spin /> : <ReloadOutlined />}
-            onClick={handleCollect}
-            disabled={collecting}
-          >
-            {collecting ? '采集中...' : '立即采集'}
-          </Button>
-        </div>
       </div>
 
       {/* 碎片检索：输入公司/产品/工艺/政策片段，得到相关报道 */}
@@ -456,6 +353,21 @@ export default function NewsPage() {
           loading={searchLoading}
           placeholder="输入公司 / 产品 / 工艺 / 政策片段… 例如：万华化学 MDI 扩产、危化品监管新规"
         />
+        <div className={styles['search-toolbar']}>
+          <Switch
+            size="small"
+            checked={includeOnline}
+            onChange={setIncludeOnline}
+            disabled={searchLoading}
+          />
+          <span className={styles['search-toolbar-label']}>同时搜全网</span>
+          <span
+            className={styles['search-toolbar-hint']}
+            title="开启后会实时检索全网并把优质结果沉淀入库，单次约 5~15 秒；关闭则只搜库内，通常 1 秒内返回"
+          >
+            {includeOnline ? '开启中：会实时拉全网，约 5~15 秒' : '已关闭：只搜库内，更快'}
+          </span>
+        </div>
         {searchQuery && searchMeta && (
           <div className={styles['search-summary']}>
             <span>
@@ -474,22 +386,6 @@ export default function NewsPage() {
             </Button>
           </div>
         )}
-      </Card>
-
-      <Card size="small" style={{ marginBottom: 16 }} title="关注主题">
-        <Space wrap>
-          <Select value={topicType} onChange={setTopicType} style={{ width: 110 }} options={[
-            { value: 'industry', label: '行业' }, { value: 'customer', label: '客户' },
-            { value: 'process', label: '工艺' }, { value: 'technology', label: '技术' },
-            { value: 'product', label: '产品' },
-          ]} />
-          <Input value={topicName} onChange={(e) => setTopicName(e.target.value)}
-            onPressEnter={handleCreateTopic} placeholder="例如：HPPO、某客户、废塑料化学回收" style={{ width: 320 }} />
-          <Button type="primary" onClick={handleCreateTopic}>添加关注</Button>
-          {focusTopics.map((topic) => (
-            <Tag key={topic.id} color="blue">{topic.name} · {topic.weight.toFixed(2)}</Tag>
-          ))}
-        </Space>
       </Card>
 
       <Card>
@@ -566,17 +462,6 @@ export default function NewsPage() {
                 setNewsPage(1)
               }}
             />
-            <Select
-              allowClear
-              placeholder="影响方向"
-              style={{ width: 130 }}
-              value={newsImpact}
-              options={IMPACT_OPTIONS}
-              onChange={(value) => {
-                setNewsImpact(value)
-                setNewsPage(1)
-              }}
-            />
           </div>
         </div>
         )}
@@ -627,15 +512,6 @@ export default function NewsPage() {
           </div>
         )}
       </Card>
-
-      {/* 采集进度模态框 */}
-      <CollectionModal
-        open={collectionModalOpen}
-        collecting={collecting}
-        result={collectionResult}
-        industryName={currentIndustry.name}
-        onClose={handleCloseModal}
-      />
     </div>
   )
 }
