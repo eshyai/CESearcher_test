@@ -7,6 +7,7 @@
   同事件的不同改写（转载/标题微调）距离显著小于不相关文本
 - 精确重复：指纹完全相同
 - 近重复：与近 N 天内资讯的汉明距离 <= 阈值
+- 标题重复：归一化相同 / 主干相同且带站点后缀（门户转载）/ 整体 Jaccard 达标
 - 对旧库兼容：若 industry_news 表尚未迁移指纹列，自动降级为仅 URL 去重并告警
 
 使用方式:
@@ -25,6 +26,104 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# 标题归一化用：去掉空白、常见中英标点与站点分隔符。
+# 只用于「是不是同一条」的判定，不用于展示（展示仍用原标题）。
+_TITLE_NOISE_RE = re.compile(
+    r"[\s\u3000\-—_|｜:：,，.。!！?？;；、()（）\[\]【】<>《》/\\\"'“”‘’®™·]+"
+)
+
+
+def normalize_title(title: str) -> str:
+    """标题归一化：去掉空白与标点、ASCII 转小写。
+
+    例：「巴斯夫上海一化工装置发生泄漏事故_公司频道_财新网」与
+        「巴斯夫上海一化工装置发生泄漏事故- 财新网」归一化后前缀一致。
+    """
+    return _TITLE_NOISE_RE.sub("", (title or "")).lower()
+
+
+def title_jaccard(title_a: str, title_b: str) -> float:
+    """两个标题的字符 3-gram Jaccard 相似度。
+
+    调用方自行决定是否先做 normalize_title（检索结果层先归一化更稳）。
+    """
+    a = (title_a or "").strip()
+    b = (title_b or "").strip()
+    if not a or not b:
+        return 0.0
+    grams_a = {a[i:i + 3] for i in range(len(a) - 2)}
+    grams_b = {b[i:i + 3] for i in range(len(b) - 2)}
+    if not grams_a or not grams_b:
+        return 0.0
+    return len(grams_a & grams_b) / len(grams_a | grams_b)
+
+
+# ---- 站点转载识别 ----
+# 门户转载同一篇文章时不动正文标题，只在尾部拼上自己的站点名，例如：
+#   「德国化工整合升温:巴斯夫拟收购赢创,双方确认已初步接触_新浪财经_新浪网」
+#   「…双方确认已初步接触_大风号_凤凰网」/「…双方确认已初步接触 _ 东方财富网」
+# 这类标题整体 Jaccard 只有 0.6x，会被阈值挡住，所以单独比对「主干」。
+_TITLE_STEM_SEP_RE = re.compile(r"[_|｜\-–—]+")
+_SITE_TAIL_WORDS = (
+    "网", "报", "头条", "财经", "新闻", "频道", "社", "传媒", "周刊",
+    "日报", "观察", "资讯", "媒体", "门户", "客户端", "号",
+)
+_STEM_MIN_LEN = 16   # 主干长度下限：太短不足以证明是同一条（如「市场行情」「环氧丙烷周报」）
+_TAIL_MAX_LEN = 20   # 站点后缀长度上限
+_ASCII_DIGIT_RE = re.compile(r"[0-9]")
+
+
+def split_title(title: str) -> tuple:
+    """把标题拆成（主干, 尾部）。无分隔符时主干即整条标题、尾部为空串。"""
+    parts = _TITLE_STEM_SEP_RE.split((title or "").strip(), maxsplit=1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return (parts[0] if parts else ""), ""
+
+
+def looks_like_site_tail(tail: str) -> bool:
+    """尾部是否像「站点名」：不含数字、不太长、且含常见站点字眼。
+
+    排除「-2026年9月」「-华东」这类其实是内容一部分的尾部，
+    避免把不同月份/不同地区的同题文章误判成同一条。
+    """
+    t = (tail or "").strip()
+    if not t or len(t) > _TAIL_MAX_LEN or _ASCII_DIGIT_RE.search(t):
+        return False
+    return any(word in t for word in _SITE_TAIL_WORDS)
+
+
+def titles_same_article(title_a: str, title_b: str, jaccard_threshold: float) -> bool:
+    """两个标题是否指向同一篇资讯（展示层与入库层共用同一口径）。
+
+    三级判定，任一命中即视为同一条：
+    1. 归一化后完全相同；
+    2. 主干完全相同（主干长度 >= 16）且至少一方带站点后缀 —— 抓门户转载；
+    3. 归一化后整体 Jaccard >= 阈值 —— 抓同事件改写。
+    """
+    a = (title_a or "").strip()
+    b = (title_b or "").strip()
+    if not a or not b:
+        return False
+
+    norm_a = normalize_title(a)
+    norm_b = normalize_title(b)
+    if norm_a == norm_b:
+        return True
+
+    stem_a, tail_a = split_title(a)
+    stem_b, tail_b = split_title(b)
+    norm_stem_a = normalize_title(stem_a)
+    norm_stem_b = normalize_title(stem_b)
+    if (
+        len(norm_stem_a) >= _STEM_MIN_LEN
+        and norm_stem_a == norm_stem_b
+        and (looks_like_site_tail(tail_a) or looks_like_site_tail(tail_b))
+    ):
+        return True
+
+    return title_jaccard(norm_a, norm_b) >= jaccard_threshold
+
 
 class NewsDedupService:
     """资讯内容指纹去重服务"""
@@ -32,8 +131,13 @@ class NewsDedupService:
     # 汉明距离阈值：<=4 视为近重复（字符 3-gram SimHash，抓"转载微调"）
     HAMMING_THRESHOLD = 4
 
-    # 标题 3-gram Jaccard 阈值：>=0.6 视为同事件改写（抓"同事件不同措辞"）
-    TITLE_JACCARD_THRESHOLD = 0.6
+    # 标题 3-gram Jaccard 阈值：视为同一条的兜底线。
+    # 之所以定得高：实测「PA6巴斯夫…塑胶颗粒」与「PA66巴斯夫…尼龙颗粒」=0.725，
+    # 「己内酰胺市场价格走势分析-2026年9月」与「…-2026年8月」=0.789 ——
+    # 低阈值会把不同牌号、不同月份的同系列内容误判成重复。门户转载那种
+    # 「同正文 + 不同站点后缀」的情形已由 titles_same_article 的主干规则覆盖，
+    # 这里只需做「几乎逐字相同」的保守兜底。
+    TITLE_JACCARD_THRESHOLD = 0.85
 
     # 只与近 N 天的资讯比对（控制查询量，资讯时效性强）
     COMPARE_WINDOW_DAYS = 30
@@ -111,14 +215,95 @@ class NewsDedupService:
 
     @staticmethod
     def _title_jaccard(title_a: str, title_b: str) -> float:
-        """两个标题的字符 3-gram Jaccard 相似度"""
-        if not title_a or not title_b:
-            return 0.0
-        grams_a = set(title_a[i:i + 3] for i in range(len(title_a) - 2))
-        grams_b = set(title_b[i:i + 3] for i in range(len(title_b) - 2))
-        if not grams_a or not grams_b:
-            return 0.0
-        return len(grams_a & grams_b) / len(grams_a | grams_b)
+        """两个标题的字符 3-gram Jaccard 相似度（保留旧入口，内部委托模块函数）"""
+        return title_jaccard(title_a, title_b)
+
+    def load_recent_pool(self, db: Session) -> dict:
+        """一次性载入近 N 天资讯的标题与指纹，供批量判重使用。
+
+        逐条调用 find_duplicate 会反复扫描全表；沉淀一批全网检索结果时
+        改为「载入一次、内存比对」，条数多时差别明显。
+
+        Returns:
+            {"titles": [(id, title), ...], "fingerprints": [(id, fp), ...]}
+            查询失败（旧库未迁移）时返回空池，判重降级为「查不到重复」。
+        """
+        from models.news import IndustryNews
+
+        since = datetime.utcnow() - timedelta(days=self.window_days)
+        pool: dict = {"titles": [], "fingerprints": []}
+        try:
+            pool["titles"] = [
+                (str(news_id), title)
+                for news_id, title in db.query(IndustryNews.id, IndustryNews.title)
+                .filter(
+                    IndustryNews.collected_at >= since,
+                    IndustryNews.title.isnot(None),
+                )
+                .order_by(IndustryNews.collected_at.desc())
+                .limit(self.TITLE_COMPARE_LIMIT)
+                .all()
+            ]
+            pool["fingerprints"] = [
+                (str(news_id), fingerprint)
+                for news_id, fingerprint in db.query(
+                    IndustryNews.id, IndustryNews.content_fingerprint
+                )
+                .filter(
+                    IndustryNews.content_fingerprint.isnot(None),
+                    IndustryNews.collected_at >= since,
+                )
+                .all()
+            ]
+        except Exception as e:
+            # 旧库未执行 03-news-dedup.sql 迁移时的降级处理
+            if not self._migration_warned:
+                logger.warning(
+                    f"[dedup] 查询指纹列失败（可能未执行 docker/init-db/03-news-dedup.sql），"
+                    f"降级为仅 URL 去重: {e}"
+                )
+                self._migration_warned = True
+            return {"titles": [], "fingerprints": []}
+        return pool
+
+    def match_pool(
+        self,
+        pool: dict,
+        fingerprint: str,
+        title: str = "",
+    ) -> Optional[str]:
+        """在已载入的池子里判重，判定口径与 find_duplicate 完全一致。
+
+        两级：标题 Jaccard >= 阈值（同事件改写）；SimHash 汉明距离 <= 阈值（转载微调）。
+        """
+        if not pool:
+            return None
+
+        normalized_title = (title or "").strip()
+        if normalized_title:
+            for news_id, existing_title in pool.get("titles") or []:
+                if existing_title and titles_same_article(
+                    normalized_title, existing_title, self.title_jaccard_threshold
+                ):
+                    return news_id
+
+        if not fingerprint:
+            return None
+        try:
+            fp_int = int(fingerprint, 16)
+        except (ValueError, TypeError):
+            return None
+        for news_id, existing_fp in pool.get("fingerprints") or []:
+            if not existing_fp:
+                continue
+            try:
+                existing_int = int(existing_fp, 16)
+            except (ValueError, TypeError):
+                continue
+            if bin(fp_int ^ existing_int).count("1") <= self.hamming_threshold:
+                return news_id
+
+        return None
 
     def find_duplicate(
         self,
@@ -142,65 +327,9 @@ class NewsDedupService:
         Returns:
             重复资讯的 id（字符串），无重复返回 None
         """
-        from models.news import IndustryNews
-
         if not fingerprint:
             return None
-
-        since = datetime.utcnow() - timedelta(days=self.window_days)
-        normalized_title = (title or "").strip()
-
-        try:
-            # ---- 级别 1: 标题相似（同事件改写）----
-            if normalized_title:
-                recent_titles = (
-                    db.query(IndustryNews.id, IndustryNews.title)
-                    .filter(
-                        IndustryNews.collected_at >= since,
-                        IndustryNews.title.isnot(None),
-                    )
-                    .order_by(IndustryNews.collected_at.desc())
-                    .limit(self.TITLE_COMPARE_LIMIT)
-                    .all()
-                )
-                for news_id, existing_title in recent_titles:
-                    if existing_title and self._title_jaccard(
-                        normalized_title, existing_title
-                    ) >= self.title_jaccard_threshold:
-                        return str(news_id)
-
-            # ---- 级别 2: SimHash 近重复（转载微调）----
-            rows = (
-                db.query(IndustryNews.id, IndustryNews.content_fingerprint)
-                .filter(
-                    IndustryNews.content_fingerprint.isnot(None),
-                    IndustryNews.collected_at >= since,
-                )
-                .all()
-            )
-        except Exception as e:
-            # 旧库未执行 03-news-dedup.sql 迁移时的降级处理
-            if not self._migration_warned:
-                logger.warning(
-                    f"[dedup] 查询指纹列失败（可能未执行 docker/init-db/03-news-dedup.sql），"
-                    f"降级为仅 URL 去重: {e}"
-                )
-                self._migration_warned = True
-            return None
-
-        fp_int = int(fingerprint, 16)
-
-        for news_id, existing_fp in rows:
-            if not existing_fp:
-                continue
-            try:
-                existing_int = int(existing_fp, 16)
-            except (ValueError, TypeError):
-                continue
-            if bin(fp_int ^ existing_int).count("1") <= self.hamming_threshold:
-                return str(news_id)
-
-        return None
+        return self.match_pool(self.load_recent_pool(db), fingerprint, title)
 
     def stats(self, db: Session) -> dict:
         """指纹覆盖情况统计（用于评估迁移完成度）"""

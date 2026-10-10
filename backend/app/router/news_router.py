@@ -268,6 +268,7 @@ class NewsSearchResponse(BaseModel):
     persisted: int = 0      # 本次沉淀新入库条数
     irrelevant_filtered: int = 0   # 被行业相关性闸剔除的候选数
     irrelevant: List[dict] = []    # 被剔除的样例（最多 10 条，便于排查）
+    title_deduped: int = 0         # 因标题重复（库内/全网同一条）被合并掉的候选数
 
 
 @router.post("/search", response_model=NewsSearchResponse)
@@ -306,6 +307,7 @@ def search_news(
         f"[news_router] search_news 返回: mode={result['mode']}, total={result['total']}, "
         f"online_kept={result.get('online_kept')}, persisted={result.get('persisted')}, "
         f"irrelevant_filtered={result.get('irrelevant_filtered')}, "
+        f"title_deduped={result.get('title_deduped')}, "
         f"vector_indexed={result['vector_indexed']}"
     )
     return NewsSearchResponse(success=True, **result)

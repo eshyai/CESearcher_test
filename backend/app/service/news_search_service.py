@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from config.industry_config import DEFAULT_INDUSTRY_ID
 from models.news import IndustryNews
+from service.dedup_service import normalize_title, titles_same_article
 from service.industry_relevance_service import get_industry_relevance_service
 from service.news_index_service import get_news_index_service
 from service.news_live_search_service import get_news_live_search_service
@@ -45,6 +46,17 @@ RERANK_MODELS = [
 # 0.05 能干净地滤掉"完全无关"的结果，避免"输入任何内容都返回一堆报道"。
 # 仅 rerank 成功时启用（向量/cosine 分数量纲不同，不适用）；关键词精确命中不受此限。
 MIN_SCORE = float(os.getenv("NEWS_SEARCH_MIN_SCORE", "0.05"))
+
+# 标题去重开关：同一条资讯常同时出现在库内与全网（不同站点、不同 URL），
+# 不处理的话同一条会重复占多个结果位。默认开启。
+TITLE_DEDUP_ENABLED = os.getenv("NEWS_SEARCH_TITLE_DEDUP", "1").lower() not in (
+    "0", "false", "no",
+)
+# 整体相似度阈值，仅作保守兜底（门户转载已由「主干 + 站点后缀」规则覆盖）。
+# 实测不能定低：「PA6巴斯夫…塑胶颗粒」vs「PA66巴斯夫…尼龙颗粒」=0.725、
+# 「己内酰胺市场价格走势分析-2026年9月」vs「…-2026年8月」=0.789，
+# 定低会误杀不同牌号/不同月份的同系列内容。想更激进可调低此环境变量。
+TITLE_DEDUP_JACCARD = float(os.getenv("NEWS_TITLE_DEDUP_JACCARD", "0.85"))
 _SPLIT_RE = re.compile(r"[\s,，、;；/|]+")
 
 
@@ -156,6 +168,11 @@ class NewsSearchService:
                 and (not event_type or r.event_type == event_type)
                 and (not impact_direction or r.impact_direction == impact_direction)
             ]
+            # 让向量分高的排前面：标题去重时同标题的库内条目会保留靠前的那条。
+            rows.sort(
+                key=lambda r: float(candidates.get(str(r.id), {}).get("vector", 0.0)),
+                reverse=True,
+            )
 
         # ---- 3) 全网实时检索（补库里没有的）----
         online_items: List[Dict[str, Any]] = []
@@ -167,15 +184,24 @@ class NewsSearchService:
                 online_items = []
 
         # ---- 4) 统一重排（库内 + 全网一起排）----
-        docs: List[str] = []
         meta: List[Tuple[str, Any, bool]] = []  # (kind, obj, keyword_hit)
         for r in rows:
-            docs.append(_doc_text(r) or (r.title or ""))
             meta.append(("lib", r, bool(candidates.get(str(r.id), {}).get("keyword"))))
         for it in online_items:
-            text = _online_text(it)
-            docs.append(text)
-            meta.append(("web", it, _token_hit(query, text)))
+            meta.append(("web", it, _token_hit(query, _online_text(it))))
+
+        # ---- 4a) 标题去重 ----
+        # 同一条资讯往往同时命中库内与全网（不同站点/不同 URL），标题归一化后
+        # 相同即视为同一条。这一步放在 rerank 之前，既避免同一条占满结果位，
+        # 也避免它浪费 RERANK_MAX_DOCS 的配额。
+        total_before_dedup = len(meta)
+        meta = self._dedupe_candidates(meta)
+        title_deduped = total_before_dedup - len(meta)
+
+        docs: List[str] = [
+            ((_doc_text(obj) or (obj.title or "")) if kind == "lib" else _online_text(obj))
+            for kind, obj, _kw in meta
+        ]
 
         if len(docs) > RERANK_MAX_DOCS:
             docs = docs[:RERANK_MAX_DOCS]
@@ -278,10 +304,47 @@ class NewsSearchService:
             "persisted": persisted,
             "irrelevant_filtered": len(irrelevant),
             "irrelevant": irrelevant[:10],
+            "title_deduped": title_deduped,
             "data": data,
         }
 
     # ---------- 内部 ----------
+
+    @staticmethod
+    def _candidate_title(kind: str, obj: Any) -> str:
+        return (obj.title or "") if kind == "lib" else (obj.get("title") or "")
+
+    def _dedupe_candidates(
+        self, meta: List[Tuple[str, Any, bool]]
+    ) -> List[Tuple[str, Any, bool]]:
+        """把标题指向同一篇资讯的候选合并成一条。
+
+        判定口径与入库判重共用（service.dedup_service.titles_same_article）：
+        ① 归一化标题完全相同；② 主干相同且带站点后缀（门户转载）；③ 整体相似度达标。
+
+        保留优先级：
+        1. 库内 > 全网 —— 库内条目有 id 能承载反馈，且已完成结构化抽取；
+        2. 同源之间保持原有先后（库内已按向量分降序，全网为博查原始排序）。
+        """
+        if not TITLE_DEDUP_ENABLED or len(meta) < 2:
+            return meta
+
+        kept: List[Tuple[str, Any, bool]] = []
+        kept_titles: List[str] = []
+        for item in meta:
+            kind, obj, _kw = item
+            raw_title = self._candidate_title(kind, obj)
+            if not normalize_title(raw_title):
+                kept.append(item)
+                continue
+            if any(
+                titles_same_article(raw_title, seen, TITLE_DEDUP_JACCARD)
+                for seen in kept_titles
+            ):
+                continue
+            kept_titles.append(raw_title)
+            kept.append(item)
+        return kept
 
     def _keyword_search(
         self,
@@ -390,6 +453,16 @@ class NewsSearchService:
 
         mapping: Dict[str, str] = {}
         created: List[IndustryNews] = []
+        skipped_duplicate = 0
+        # 判重池只载入一次：逐条调用 find_duplicate 会把近 2000 条标题反复扫一遍。
+        pool = None
+        if dedup is not None:
+            try:
+                pool = dedup.load_recent_pool(self.db)
+            except Exception as e:
+                logger.warning(f"[news_search] 载入去重池失败，本轮仅按 URL 判重: {e}")
+                pool = None
+
         for it in items:
             url = it.get("source_url") or ""
             if not url:
@@ -411,6 +484,17 @@ class NewsSearchService:
                     fp = dedup.compute_fingerprint(title, content)
                 except Exception:
                     fp = None
+                # 库内已经存在同一条（换了个站点/URL 又搜到）：只建立关联，不重复入库，
+                # 否则同一篇文章会以不同 URL 反复沉淀，检索时重复出现。
+                if pool is not None:
+                    try:
+                        dup_id = dedup.match_pool(pool, fp, title)
+                    except Exception:
+                        dup_id = None
+                    if dup_id:
+                        mapping[url] = dup_id
+                        skipped_duplicate += 1
+                        continue
             row = IndustryNews(
                 industry_id=industry_id,
                 title=title[:500],
@@ -427,6 +511,10 @@ class NewsSearchService:
             created.append(row)
 
         if not created:
+            if skipped_duplicate:
+                logger.info(
+                    f"[news_search] 全网结果 {skipped_duplicate} 条与库内已有资讯重复，未重复入库"
+                )
             return mapping, 0
 
         try:
@@ -435,7 +523,10 @@ class NewsSearchService:
                 self.db.refresh(r)
                 mapping[r.source_url] = str(r.id)
             self.index.index_news(created, industry_id=industry_id)
-            logger.info(f"[news_search] 已沉淀入库并建索引 {len(created)} 条全网资讯")
+            extra = f"（另有 {skipped_duplicate} 条与库内重复已跳过）" if skipped_duplicate else ""
+            logger.info(
+                f"[news_search] 已沉淀入库并建索引 {len(created)} 条全网资讯{extra}"
+            )
         except Exception as e:
             self.db.rollback()
             logger.warning(f"[news_search] 沉淀入库失败（不影响本次返回）: {e}")

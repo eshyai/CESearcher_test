@@ -23,6 +23,11 @@
 
 2. **LLM 批量判定** —— 其余候选一次性提交（单次调用，避免逐条开销），
    明确要求排除股票行情页、招聘页、文库文档、B2B 买卖信息等。
+   提示词明确「并购/收购/投融资属于行业经营信息」「拿不准判相关」，
+   以抑制小模型在边界样例上的翻转。
+
+**非中文内容不判定**：中文占比低于阈值（默认 0.15）的文本直接放行
+（实测德语 BASF 报道被判为「与化工无关」而剔除，属纯误杀）。
 
 **失败降级为"放行"**：LLM 不可用/超时/解析失败时保留全部候选。
 宁可漏杀，不可误杀——闸门故障不应导致检索结果全空。
@@ -54,6 +59,11 @@ INDUSTRY_GATE_MODEL = os.getenv("NEWS_INDUSTRY_GATE_MODEL", "qwen-turbo")
 INDUSTRY_GATE_BATCH = int(os.getenv("NEWS_INDUSTRY_GATE_BATCH", "30"))
 # 单条文本截断长度（判定只需摘要级信息）
 INDUSTRY_GATE_TEXT_LIMIT = int(os.getenv("NEWS_INDUSTRY_GATE_TEXT_LIMIT", "260"))
+# 中文占比下限：低于此值视为「模型读不懂的语言」，不送 LLM 判定直接放行。
+# 实测德语 BASF 报道被判为「与化工无关」而被剔除——在模型无法可靠阅读的
+# 语言上判定只会造成误杀，这类内容交给来源质量闸兜底。
+INDUSTRY_GATE_CJK_MIN_RATIO = float(os.getenv("NEWS_INDUSTRY_GATE_CJK_MIN", "0.15"))
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 # ------------------------------------------------------------
 # 1. 强信号词：命中即判定为"相关"，不调 LLM
@@ -93,8 +103,8 @@ IRRELEVANT_TITLE_PATTERNS = [
     # 二手设备 / B2B 供求广告（非行业资讯）：常带【】或"高价/大量/长期/求购"等叫卖语
     re.compile(r"[【\[][^】\]]{0,40}(收购|求购|出售|回收|转让|供应|直销)"),
     re.compile(r"(高价收购|大量收购|长期收购|库存积压|求购|现货供应|厂家直销|价格面议|低价处理|整厂回收)"),
-    # B2B 信息平台后缀
-    re.compile(r"[-—_|\s]\s*(处理网|顺企网|企业网|黄页88|马可波罗|环球贸易网|中国供应商)\s*$"),
+    # B2B 信息平台后缀（含「顺企网公司黄页」这类站点名后还带栏目的写法）
+    re.compile(r"[-—_|\s]\s*(处理网|顺企网|企业网|黄页88|马可波罗|环球贸易网|中国供应商)(公司黄页|黄页|网)?\s*$"),
 ]
 
 # ------------------------------------------------------------
@@ -140,6 +150,17 @@ class IndustryRelevanceService:
         t = title or ""
         return any(p.search(t) for p in IRRELEVANT_TITLE_PATTERNS)
 
+    @staticmethod
+    def _is_judgeable(text: str) -> bool:
+        """文本是否适合交 LLM 判定（中文占比达标）。
+
+        非中文内容一律放行：模型读不懂时给出的「不相关」是噪声而非判断。
+        """
+        t = (text or "").strip()
+        if not t:
+            return False
+        return len(_CJK_RE.findall(t)) / len(t) >= INDUSTRY_GATE_CJK_MIN_RATIO
+
     # ---------- LLM 批量判定 ----------
 
     def _judge_batch(self, texts: List[str], industry_id: str) -> Optional[List[bool]]:
@@ -159,12 +180,19 @@ class IndustryRelevanceService:
             f"下面是 {len(texts)} 条待判定内容（每条为「标题 + 摘要」）：\n"
             f"{numbered}\n\n"
             "判定标准：只有当内容**本身讲述的是该行业的经营/产品/政策/技术/安全信息**时才算相关。\n"
+            "以下属于该行业的经营信息，判为**相关**：\n"
+            "- 行业内企业的并购重组、收购、合并洽谈、投融资、产能与项目投资、海外业务与业绩动态\n"
+            "- 行业内产品的价格、行情、供需、进出口\n"
+            "- 生产企业与装置的投产、检修、扩产、事故、安全环保事件\n\n"
             "以下一律判为不相关：\n"
             "- 股票行情页、股价快照、股吧讨论、投资分析（只提到公司名不算）\n"
+            "- B2B 买卖与代理经销信息：产品报价页、公司黄页、经销商/代理商广告"
+            "（如「XX(授权)代理商」「XX塑胶原料有限公司」这类只有供货与联系方式的页面）\n"
             "- 招聘、求职、宣讲会\n"
             "- 文库/课件/试题/范文等文档资料\n"
-            "- 二手设备、B2B 求购出售、商务交易信息（非通用行业资讯）\n"
             "- 与上述行业完全无关的其他领域（如医疗美容、教育培训、法律服务的商业广告）\n\n"
+            "只依据内容本身判断。不要因为标题里出现财经、医药、门户类站点名"
+            "（如「财经网」「医药新闻」「大风号」「东方财富网」）就判为不相关。\n\n"
             f"请只输出一个 JSON 数组，长度必须为 {len(texts)}，元素为 true（相关）或 false（不相关），"
             "例如：[true,false,true]。不要输出任何解释、不要加 ``` 标记。"
         )
@@ -232,6 +260,9 @@ class IndustryRelevanceService:
                 continue
             # 强信号词 → 直接放行
             if self._strong_hit(text):
+                continue
+            # 非中文内容（模型读不懂）→ 放行，不交给 LLM 瞎判
+            if not self._is_judgeable(text):
                 continue
             pending.append(i)
             pending_texts.append(text)
