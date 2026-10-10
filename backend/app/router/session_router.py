@@ -1,7 +1,7 @@
 """会话管理路由"""
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -9,6 +9,7 @@ from core.database import get_db
 from models.chat import ChatSession, ChatMessage
 from models.user import User
 from router.auth_router import get_current_user_required, get_current_user
+from service.memory_service import get_memory_service
 from schemas.chat import (
     SessionCreate,
     SessionUpdate,
@@ -245,6 +246,7 @@ async def get_messages(
 async def add_message(
     session_id: str,
     message_data: MessageCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user_required),
     db: Session = Depends(get_db),
 ):
@@ -291,5 +293,16 @@ async def add_message(
 
     db.commit()
     db.refresh(message)
+
+    # 助手回复落库后，后台尝试生成/更新该会话的长期记忆。
+    # 触发判定（累计 token 阈值 + 相比上条记忆的增量）在服务内部完成，
+    # 不满足则立即返回，成本可忽略；放后台是为了不阻塞这次保存的响应
+    # （命中时需要调用 LLM 总结，约数秒）。
+    if message_data.role == "assistant":
+        background_tasks.add_task(
+            get_memory_service().maybe_create_memory_for_session,
+            str(session_uuid),
+            str(current_user.id),
+        )
 
     return message_to_response(message)

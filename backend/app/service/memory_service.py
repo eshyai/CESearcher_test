@@ -23,8 +23,10 @@ from models.chat import ChatSession, ChatMessage, LongTermMemory
 from service.embedding_service import generate_embedding
 from service.milvus_service import get_milvus_service, MilvusService
 
-# 记忆触发阈值
-MEMORY_TOKEN_THRESHOLD = 10000  # 超过此 token 数触发记忆压缩
+# 记忆触发阈值（token）。中文约 3 字符/token，默认 1500 约合 4500 字符，
+# 大致相当于一轮完整问答。原值 10000（约 30000 字符）过高，实际对话基本触达不到，
+# 是记忆库长期为空的原因之一。可通过环境变量 MEMORY_TOKEN_THRESHOLD 覆盖。
+MEMORY_TOKEN_THRESHOLD = int(os.getenv("MEMORY_TOKEN_THRESHOLD", "1500"))
 MEMORY_COLLECTION_NAME = "long_term_memories"  # Milvus 集合名称
 
 
@@ -217,6 +219,65 @@ class MemoryService:
         print(f"创建长期记忆成功: {memory.id}")
         return memory
 
+    def maybe_create_memory_for_session(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> Optional[str]:
+        """检查会话是否达到条件，满足则为该会话生成一条长期记忆。
+
+        设计为供后台任务调用，因此自行创建/关闭数据库会话——请求级 db 在响应
+        返回后可能已关闭，不能复用。
+
+        触发条件（两道门槛，避免每轮对话都白跑一次 LLM 总结）：
+        1. 会话全部消息累计 token 达到 MEMORY_TOKEN_THRESHOLD；
+        2. 相比该会话上一条记忆，新增内容的 token 也达到阈值。
+
+        Returns:
+            新记忆的 ID；未触发或失败时返回 None
+        """
+        from core.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            session_uuid = (
+                session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(str(session_id))
+            )
+            messages = (
+                db.query(ChatMessage)
+                .filter(ChatMessage.session_id == session_uuid)
+                .order_by(ChatMessage.created_at.asc())
+                .all()
+            )
+            if not messages:
+                return None
+
+            total_tokens = sum(self.estimate_tokens(msg.content or "") for msg in messages)
+            if total_tokens < MEMORY_TOKEN_THRESHOLD:
+                return None
+
+            last_memory = (
+                db.query(LongTermMemory)
+                .filter(LongTermMemory.session_id == session_uuid)
+                .order_by(LongTermMemory.created_at.desc())
+                .first()
+            )
+            if last_memory and (total_tokens - (last_memory.token_count or 0)) < MEMORY_TOKEN_THRESHOLD:
+                return None
+
+            memory = self.create_memory(
+                db=db,
+                user_id=user_id,
+                session_id=str(session_uuid),
+                messages=messages,
+            )
+            return str(memory.id) if memory else None
+        except Exception as e:
+            print(f"自动生成长期记忆失败: {e}")
+            return None
+        finally:
+            db.close()
+
     def _store_memory_vectors(
         self,
         memory_id: str,
@@ -226,6 +287,16 @@ class MemoryService:
     ) -> List[str]:
         """将记忆内容向量化并存储到 Milvus"""
         from pymilvus import Collection
+
+        # 确保 Milvus 连接已建立、记忆集合已创建（懒加载）。
+        # 该连接由 MilvusService.__init__ 里的 connections.connect(alias="default") 建立，
+        # 因此必须先访问 self.milvus；否则下面的 Collection() 会抛
+        # ConnectionNotExistException: should create connection first。
+        try:
+            _ = self.milvus
+        except Exception as e:
+            print(f"记忆 Milvus 不可用，跳过向量存储: {e}")
+            return []
 
         milvus_ids = []
         documents_to_insert = []
@@ -326,6 +397,12 @@ class MemoryService:
         """
         from pymilvus import Collection, utility
 
+        try:
+            _ = self.milvus
+        except Exception as e:
+            print(f"记忆 Milvus 不可用: {e}")
+            return []
+
         if not utility.has_collection(MEMORY_COLLECTION_NAME):
             return []
 
@@ -392,6 +469,11 @@ class MemoryService:
     ) -> bool:
         """删除指定的长期记忆"""
         from pymilvus import Collection, utility
+
+        try:
+            _ = self.milvus
+        except Exception as e:
+            print(f"记忆 Milvus 不可用，仅删除数据库记录: {e}")
 
         memory = db.query(LongTermMemory).filter(
             LongTermMemory.id == memory_id,

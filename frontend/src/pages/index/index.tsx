@@ -1,6 +1,6 @@
 import IconBg from '@/assets/index/bg.png'
 import IconSearch from '@/assets/index/search.svg'
-import { Input, message } from 'antd'
+import { Input } from 'antd'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { INDUSTRY_CONFIGS, setCurrentIndustry } from '@/store/industry'
@@ -57,11 +57,6 @@ export default function Index() {
       </div>
 
       <div className={styles['search-bar']}>
-        <div className={styles['switch']}>
-          <div onClick={() => message.info('暂未开放')} style={{ cursor: 'pointer' }}>我的</div>
-          <div className={styles.active}>市场</div>
-        </div>
-
         <div className={styles['search-bar__input']}>
           <Input
             prefix={<img src={IconSearch} />}

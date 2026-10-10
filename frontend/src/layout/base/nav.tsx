@@ -10,7 +10,7 @@ import IconStar from '@/assets/layout/star.svg'
 import React, { useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useSnapshot } from 'valtio'
-import { Dropdown, message } from 'antd'
+import { Dropdown } from 'antd'
 import { DownOutlined } from '@ant-design/icons'
 import { NavItem } from './nav-item'
 import { SessionDrawer } from '@/components/session-drawer'
@@ -69,8 +69,7 @@ export function Nav() {
         key: 'memory',
         label: '记忆库',
         icon: IconMemory,
-        href: '#',
-        onClick: () => message.info('暂未开放'),
+        href: '/memory',
       },
       {
         key: 'knowledge',
