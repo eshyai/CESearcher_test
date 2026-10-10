@@ -266,6 +266,8 @@ class NewsSearchResponse(BaseModel):
     online_total: int = 0   # 全网检索命中（过滤后）条数
     online_kept: int = 0    # 进入最终结果的全网条数
     persisted: int = 0      # 本次沉淀新入库条数
+    irrelevant_filtered: int = 0   # 被行业相关性闸剔除的候选数
+    irrelevant: List[dict] = []    # 被剔除的样例（最多 10 条，便于排查）
 
 
 @router.post("/search", response_model=NewsSearchResponse)
@@ -303,6 +305,7 @@ def search_news(
     logger.info(
         f"[news_router] search_news 返回: mode={result['mode']}, total={result['total']}, "
         f"online_kept={result.get('online_kept')}, persisted={result.get('persisted')}, "
+        f"irrelevant_filtered={result.get('irrelevant_filtered')}, "
         f"vector_indexed={result['vector_indexed']}"
     )
     return NewsSearchResponse(success=True, **result)

@@ -1023,12 +1023,44 @@ URL: {url}
 
             self.logger.info(f"Executing local knowledge base search: {query[:50]}...")
 
-            # 搜索所有知识库（collection_name = "knowledge_base"）
-            results = self.milvus_service.search(
-                collection_name="knowledge_base",
-                query_vector=query_vector,
-                top_k=top_k
-            )
+            # 知识库文档实际写入的集合名是 kb_{知识库名}（见 router/knowledge_router.py
+            # 的 process_document → docmind_service.process_document_with_docmind，
+            # 其中 index_name 即 Milvus 集合名），并不是固定的 "knowledge_base"。
+            # 因此这里枚举所有 kb_ 前缀集合（并兼容历史遗留的 knowledge_base）逐个检索
+            # 再按相似度合并；否则用户上传的文档永远检索不到。
+            try:
+                from pymilvus import utility as _milvus_utility
+
+                kb_collections = [
+                    c for c in _milvus_utility.list_collections()
+                    if c == "knowledge_base" or c.startswith("kb_")
+                ]
+            except Exception as e:
+                self.logger.warning(f"List Milvus collections failed: {e}")
+                kb_collections = ["knowledge_base"]
+
+            if not kb_collections:
+                self.logger.info("No knowledge base collection found, skip local search")
+                return []
+
+            merged: List[Dict] = []
+            for coll in kb_collections:
+                try:
+                    part = self.milvus_service.search(
+                        collection_name=coll,
+                        query_vector=query_vector,
+                        top_k=top_k,
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Local search on '{coll}' failed: {e}")
+                    continue
+                for r in part:
+                    r["_collection"] = coll
+                merged.extend(part)
+
+            # 多集合结果合并后按相似度取 top_k
+            merged.sort(key=lambda x: x.get("score") or 0, reverse=True)
+            results = merged[:top_k]
 
             # 格式化结果为与网络搜索一致的格式
             formatted_results = []
@@ -1044,7 +1076,8 @@ URL: {url}
                     'is_local': True,
                     'kb_id': r.get('kb_id'),
                     'doc_id': r.get('doc_id'),
-                    'chunk_index': r.get('chunk_index')
+                    'chunk_index': r.get('chunk_index'),
+                    'kb_collection': r.get('_collection'),
                 })
 
             self.logger.info(f"Local search returned {len(formatted_results)} results for: {query[:30]}...")

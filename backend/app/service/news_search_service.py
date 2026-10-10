@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from config.industry_config import DEFAULT_INDUSTRY_ID
 from models.news import IndustryNews
+from service.industry_relevance_service import get_industry_relevance_service
 from service.news_index_service import get_news_index_service
 from service.news_live_search_service import get_news_live_search_service
 
@@ -102,6 +103,7 @@ class NewsSearchService:
         self.db = db
         self.index = get_news_index_service()
         self.live = get_news_live_search_service()
+        self.relevance = get_industry_relevance_service()
         self._rerank_model: Optional[str] = None  # 探测到的可用 rerank 模型，进程内复用
 
     # ---------- 对外 ----------
@@ -201,13 +203,40 @@ class NewsSearchService:
 
         scored.sort(key=lambda x: x[2], reverse=True)
 
-        # ---- 5) 组装结果（按相关度阈值过滤）----
+        # ---- 5a) 阈值过滤 ----
+        # 阈值只挡"低分的非精确命中"；关键词精确命中是强信号，一律保留
         min_score = MIN_SCORE if used_rerank else 0.0
+        kept = [
+            (kind, obj, s, kw)
+            for kind, obj, s, kw in scored
+            if not (s < min_score and not kw)
+        ]
+
+        # ---- 5b) 行业相关性闸 ----
+        # 阈值与 rerank 只保证"与查询词相关"，不保证"属于本行业"。检索泛词
+        # （实测如「收购」）时会把医美收购、B2B 买卖、股票行情页等高相关度但
+        # 非本行业的内容放行，并被 _persist_online 永久沉淀进资讯库。
+        # 这里在组装与沉淀之前统一过一道闸：库内与全网候选一起判定，
+        # 不合格的直接剔除（既不展示、也不入库）。
+        gate_items = [
+            {
+                "title": (obj.title or "") if kind == "lib" else (obj.get("title") or ""),
+                "summary": (obj.summary or "") if kind == "lib" else (obj.get("summary") or ""),
+            }
+            for kind, obj, s, kw in kept
+        ]
+        try:
+            keep_idx, irrelevant = self.relevance.filter_relevant(gate_items, industry_id)
+        except Exception as e:
+            logger.warning(f"[news_search] 行业相关性判定异常，跳过该闸: {e}")
+            keep_idx, irrelevant = list(range(len(kept))), []
+        keep_set = set(keep_idx)
+
+        # ---- 6) 组装结果 ----
         data: List[Dict[str, Any]] = []
         web_kept: List[Dict[str, Any]] = []
-        for kind, obj, s, kw in scored:
-            # 阈值只挡"低分的非精确命中"；关键词精确命中是强信号，一律保留
-            if s < min_score and not kw:
+        for pos, (kind, obj, s, kw) in enumerate(kept):
+            if pos not in keep_set:
                 continue
             if kind == "lib":
                 item = obj.to_dict()
@@ -227,7 +256,9 @@ class NewsSearchService:
             if len(data) >= max(1, limit):
                 break
 
-        # ---- 6) 沉淀：把保留的全网结果入库 + 建索引（下次可被库内命中）----
+        # ---- 7) 沉淀：把保留的全网结果入库 + 建索引（下次可被库内命中）----
+        # 注意：web_kept 只包含通过行业相关性闸的结果，因此与本行业无关的内容
+        # 不会写进资讯库。
         persisted = 0
         if web_kept and include_online:
             mapping, persisted = self._persist_online(web_kept, industry_id)
@@ -245,6 +276,8 @@ class NewsSearchService:
             "online_total": len(online_items),
             "online_kept": len(web_kept),
             "persisted": persisted,
+            "irrelevant_filtered": len(irrelevant),
+            "irrelevant": irrelevant[:10],
             "data": data,
         }
 
