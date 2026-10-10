@@ -53,3 +53,6 @@ USER_ACTION.md
 
 # WorkBuddy local session data
 .workbuddy/
+
+# DeepResearch 运行时产出的图表（由 wizard agent 在 backend/ 下生成，非源码）
+backend/*.png
