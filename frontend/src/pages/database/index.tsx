@@ -190,7 +190,7 @@ export default function DatabasePage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Input
-            placeholder="用自然语言查询，如：智慧交通市场规模是多少"
+            placeholder="用自然语言查询，如：化工行业市场规模是多少"
             prefix={<SearchOutlined style={{ color: colors.textTertiary }} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}

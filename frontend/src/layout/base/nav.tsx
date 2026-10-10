@@ -115,38 +115,44 @@ export function Nav() {
 
   return (
     <>
-      {/* 行业选择器 */}
+      {/* 行业选择器：只有一个行业时退化为静态标签，不再弹下拉 */}
       <div className="industry-selector">
-        <Dropdown
-          menu={{
-            items: industryMenuItems,
-            style: { backgroundColor: '#fff' },
-          }}
-          trigger={['click']}
-          placement="bottomLeft"
-          dropdownRender={(menu) => (
-            <div
-              style={{
-                backgroundColor: '#fff',
-                borderRadius: 8,
-                boxShadow: '0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12)',
-                padding: 4,
-              }}
-            >
-              {React.cloneElement(menu as React.ReactElement, {
-                style: {
+        {industries.length > 1 ? (
+          <Dropdown
+            menu={{
+              items: industryMenuItems,
+              style: { backgroundColor: '#fff' },
+            }}
+            trigger={['click']}
+            placement="bottomLeft"
+            dropdownRender={(menu) => (
+              <div
+                style={{
                   backgroundColor: '#fff',
-                  boxShadow: 'none',
-                },
-              })}
+                  borderRadius: 8,
+                  boxShadow: '0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12)',
+                  padding: 4,
+                }}
+              >
+                {React.cloneElement(menu as React.ReactElement, {
+                  style: {
+                    backgroundColor: '#fff',
+                    boxShadow: 'none',
+                  },
+                })}
+              </div>
+            )}
+          >
+            <div className="industry-selector__trigger">
+              <span className="industry-selector__label">{currentIndustry.name}</span>
+              <DownOutlined className="industry-selector__icon" />
             </div>
-          )}
-        >
-          <div className="industry-selector__trigger">
+          </Dropdown>
+        ) : (
+          <div className="industry-selector__trigger" style={{ cursor: 'default' }}>
             <span className="industry-selector__label">{currentIndustry.name}</span>
-            <DownOutlined className="industry-selector__icon" />
           </div>
-        </Dropdown>
+        )}
       </div>
 
       <div className="base-layout-nav">

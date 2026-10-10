@@ -6,13 +6,9 @@ import { useNavigate } from 'react-router-dom'
 import { INDUSTRY_CONFIGS, setCurrentIndustry } from '@/store/industry'
 import styles from './index.module.scss'
 
-// 行业卡片颜色配置
+// 行业卡片颜色配置（新增行业时在此补一条，未配置的会走默认灰）
 const INDUSTRY_COLORS: Record<string, { color: string; bgColor: string }> = {
   chemical: { color: '#B45309', bgColor: '#FFF7ED' },
-  smart_transportation: { color: '#055588', bgColor: '#E7F4FF' },
-  finance: { color: '#1144BA', bgColor: '#EFF3FF' },
-  healthcare: { color: '#335519', bgColor: '#EDF7E6' },
-  energy: { color: '#B85C00', bgColor: '#FFF4E6' },
 }
 
 export default function Index() {
