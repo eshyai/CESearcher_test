@@ -49,6 +49,12 @@
     background-color: #f5f5f5;
     border-radius: 8px;
   }
+
+  .revision {
+    font-size: 12px;
+    margin-left: 4px;
+    cursor: help;
+  }
 }
 
 .kb-list {
@@ -99,6 +105,20 @@
       font-size: 13px;
       margin-bottom: 12px !important;
       min-height: 40px;
+    }
+
+    .card-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+
+      :global {
+        .ant-tag {
+          margin-inline-end: 0;
+        }
+      }
     }
 
     .card-meta {
@@ -167,5 +187,30 @@
         text-decoration: underline;
       }
     }
+  }
+}
+
+.audit-item {
+  display: block;
+  padding: 10px 0 !important;
+
+  .audit-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .audit-time {
+    font-size: 12px;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .audit-detail {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #666;
+    word-break: break-all;
   }
 }

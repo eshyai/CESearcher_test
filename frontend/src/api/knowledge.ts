@@ -6,6 +6,8 @@ export interface KnowledgeBase {
   description?: string
   document_count: number
   is_shared: boolean
+  /** private：仅创建者与成员；team：部门内登录用户均可只读 */
+  visibility: 'private' | 'team'
   revision: number
   role: 'viewer' | 'editor' | 'manager'
   created_at: string
@@ -35,12 +37,14 @@ export interface CreateKnowledgeBaseParams {
   name: string
   description?: string
   is_shared?: boolean
+  visibility?: 'private' | 'team'
 }
 
 export interface UpdateKnowledgeBaseParams {
   name?: string
   description?: string
   is_shared?: boolean
+  visibility?: 'private' | 'team'
 }
 
 /**
@@ -82,6 +86,8 @@ export interface KnowledgeBaseMember {
   user_id: string
   username: string
   role: 'viewer' | 'editor' | 'manager'
+  /** 是否为知识库创建者（创建者固定 manager，不可移除/降级） */
+  is_owner?: boolean
   created_at?: string
 }
 
@@ -102,6 +108,22 @@ export function removeKnowledgeBaseMember(kbId: string, userId: string) {
 
 export function restoreKnowledgeBase(kbId: string) {
   return request.post<KnowledgeBase>(`/knowledge-bases/${kbId}/restore`)
+}
+
+/** 审计日志条目 */
+export interface KnowledgeAuditLog {
+  id: string
+  actor_user_id: string | null
+  action: string
+  target_type: string
+  target_id: string | null
+  detail: Record<string, any>
+  created_at: string
+}
+
+/** 获取知识库操作日志（仅 manager） */
+export function getKnowledgeBaseAudit(kbId: string) {
+  return request.get<KnowledgeAuditLog[]>(`/knowledge-bases/${kbId}/audit`, { loading: false })
 }
 
 /**

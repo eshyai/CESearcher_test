@@ -59,6 +59,25 @@ TITLE_DEDUP_ENABLED = os.getenv("NEWS_SEARCH_TITLE_DEDUP", "1").lower() not in (
 TITLE_DEDUP_JACCARD = float(os.getenv("NEWS_TITLE_DEDUP_JACCARD", "0.85"))
 _SPLIT_RE = re.compile(r"[\s,，、;；/|]+")
 
+# 「过滤外文」开关的判定阈值：标题中文占比低于此值即视为外文。
+# 说明：行业相关性闸对非中文内容"直接放行"（模型读不懂的语言上判定是噪声），
+# 于是搜到俄文/德文报道时会被展示出来。默认保持放行（宁可显示不静默丢弃），
+# 是否丢弃交由用户在检索框旁自行开关。
+FOREIGN_CJK_MIN_RATIO = float(os.getenv("NEWS_FOREIGN_CJK_MIN", "0.15"))
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _looks_foreign(title: str, fallback: str = "") -> bool:
+    """标题（标题缺失时退回摘要）的中文占比是否低于阈值。
+
+    用标题而非正文判断：外文报道的标题必然是外文，而中文报道的正文里
+    常混有英文产品名/牌号，用正文判断会误杀。
+    """
+    t = (title or "").strip() or (fallback or "").strip()
+    if not t:
+        return False
+    return len(_CJK_RE.findall(t)) / len(t) < FOREIGN_CJK_MIN_RATIO
+
 
 def _escape_like(token: str) -> str:
     """转义 LIKE 通配符，避免用户输入的 % _ 变成通配。"""
@@ -128,13 +147,15 @@ class NewsSearchService:
         impact_direction: Optional[str] = None,
         limit: int = 20,
         include_online: bool = True,
+        exclude_foreign: bool = False,
     ) -> Dict[str, Any]:
         query = (query or "").strip()
         industry_id = industry_id or DEFAULT_INDUSTRY_ID
         if not query:
             return {
                 "query": query, "mode": "empty", "vector_indexed": False, "total": 0,
-                "online_total": 0, "online_kept": 0, "persisted": 0, "data": [],
+                "online_total": 0, "online_kept": 0, "persisted": 0,
+                "foreign_filtered": 0, "data": [],
             }
 
         candidates: Dict[str, Dict[str, Any]] = {}
@@ -190,7 +211,14 @@ class NewsSearchService:
         for it in online_items:
             meta.append(("web", it, _token_hit(query, _online_text(it))))
 
-        # ---- 4a) 标题去重 ----
+        # ---- 4a) 外文过滤（可选）----
+        # 行业相关性闸对非中文内容直接放行，因此搜到外文报道时会被展示。
+        # 用户在检索框旁打开「过滤外文」后，这里按标题中文占比丢弃外文候选。
+        foreign_filtered = 0
+        if exclude_foreign:
+            meta, foreign_filtered = self._filter_foreign(meta)
+
+        # ---- 4b) 标题去重 ----
         # 同一条资讯往往同时命中库内与全网（不同站点/不同 URL），标题归一化后
         # 相同即视为同一条。这一步放在 rerank 之前，既避免同一条占满结果位，
         # 也避免它浪费 RERANK_MAX_DOCS 的配额。
@@ -305,6 +333,7 @@ class NewsSearchService:
             "irrelevant_filtered": len(irrelevant),
             "irrelevant": irrelevant[:10],
             "title_deduped": title_deduped,
+            "foreign_filtered": foreign_filtered,
             "data": data,
         }
 
@@ -313,6 +342,32 @@ class NewsSearchService:
     @staticmethod
     def _candidate_title(kind: str, obj: Any) -> str:
         return (obj.title or "") if kind == "lib" else (obj.get("title") or "")
+
+    @staticmethod
+    def _candidate_summary(kind: str, obj: Any) -> str:
+        return (obj.summary or "") if kind == "lib" else (obj.get("summary") or "")
+
+    def _filter_foreign(
+        self, meta: List[Tuple[str, Any, bool]]
+    ) -> Tuple[List[Tuple[str, Any, bool]], int]:
+        """丢弃标题为外文的候选（标题缺失时看摘要）。
+
+        Returns:
+            (保留的候选, 被丢弃条数)
+        """
+        kept: List[Tuple[str, Any, bool]] = []
+        dropped = 0
+        for item in meta:
+            kind, obj, _kw = item
+            title = self._candidate_title(kind, obj)
+            fallback = self._candidate_summary(kind, obj)
+            if _looks_foreign(title, fallback):
+                dropped += 1
+                continue
+            kept.append(item)
+        if dropped:
+            logger.info(f"[news_search] 已过滤外文候选 {dropped} 条")
+        return kept, dropped
 
     def _dedupe_candidates(
         self, meta: List[Tuple[str, Any, bool]]

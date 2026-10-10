@@ -27,8 +27,12 @@ export const knowledgeActions = {
     }
   },
 
-  async createKnowledgeBase(name: string, description?: string) {
-    const res = await knowledgeApi.createKnowledgeBase({ name, description })
+  async createKnowledgeBase(
+    name: string,
+    description?: string,
+    visibility: 'private' | 'team' = 'private'
+  ) {
+    const res = await knowledgeApi.createKnowledgeBase({ name, description, visibility })
     knowledgeState.knowledgeBases.unshift(res.data)
     return res.data
   },
@@ -44,8 +48,13 @@ export const knowledgeActions = {
     }
   },
 
-  async updateKnowledgeBase(kbId: string, name?: string, description?: string) {
-    const res = await knowledgeApi.updateKnowledgeBase(kbId, { name, description })
+  async updateKnowledgeBase(
+    kbId: string,
+    name?: string,
+    description?: string,
+    visibility?: 'private' | 'team'
+  ) {
+    const res = await knowledgeApi.updateKnowledgeBase(kbId, { name, description, visibility })
     const index = knowledgeState.knowledgeBases.findIndex((kb) => kb.id === kbId)
     if (index !== -1) {
       knowledgeState.knowledgeBases[index] = res.data

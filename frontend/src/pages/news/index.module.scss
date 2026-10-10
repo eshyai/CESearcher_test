@@ -216,6 +216,19 @@
     margin-top: 10px;
     font-size: 13px;
 
+    .search-toolbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .search-toolbar-divider {
+      width: 1px;
+      height: 14px;
+      background: currentColor;
+      opacity: 0.18;
+    }
+
     .search-toolbar-label {
       opacity: 0.85;
     }

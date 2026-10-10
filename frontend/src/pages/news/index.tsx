@@ -96,9 +96,12 @@ export default function NewsPage() {
     vectorIndexed: boolean
     onlineKept: number
     persisted: number
+    foreignFiltered: number
   } | null>(null)
   // 是否同时检索全网（默认开）：一次搜索即可拿到库里没有的最新资讯，并把优质结果沉淀入库
   const [includeOnline, setIncludeOnline] = useState(true)
+  // 是否过滤外文结果（默认关）：行业相关性闸对非中文内容放行，打开后可丢弃外文报道
+  const [excludeForeign, setExcludeForeign] = useState(false)
 
   const pageSize = 20
 
@@ -151,6 +154,7 @@ export default function NewsPage() {
           industry_id: currentIndustryId,
           limit: 20,
           include_online: includeOnline,
+          exclude_foreign: excludeForeign,
         })
         setSearchResults(res.data)
         setSearchMeta({
@@ -158,6 +162,7 @@ export default function NewsPage() {
           vectorIndexed: res.vector_indexed,
           onlineKept: res.online_kept || 0,
           persisted: res.persisted || 0,
+          foreignFiltered: res.foreign_filtered || 0,
         })
         // 有全网结果沉淀入库时，顺带刷新列表页码总数
         if ((res.persisted || 0) > 0) {
@@ -171,7 +176,7 @@ export default function NewsPage() {
         setSearchLoading(false)
       }
     },
-    [currentIndustryId, includeOnline, fetchNews],
+    [currentIndustryId, includeOnline, excludeForeign, fetchNews],
   )
 
   const exitSearch = () => {
@@ -354,18 +359,36 @@ export default function NewsPage() {
           placeholder="输入公司 / 产品 / 工艺 / 政策片段… 例如：万华化学 MDI 扩产、危化品监管新规"
         />
         <div className={styles['search-toolbar']}>
-          <Switch
-            size="small"
-            checked={includeOnline}
-            onChange={setIncludeOnline}
-            disabled={searchLoading}
-          />
-          <span className={styles['search-toolbar-label']}>同时搜全网</span>
-          <span
-            className={styles['search-toolbar-hint']}
-            title="开启后会实时检索全网并把优质结果沉淀入库，单次约 5~15 秒；关闭则只搜库内，通常 1 秒内返回"
-          >
-            {includeOnline ? '开启中：会实时拉全网，约 5~15 秒' : '已关闭：只搜库内，更快'}
+          <span className={styles['search-toolbar-group']}>
+            <Switch
+              size="small"
+              checked={includeOnline}
+              onChange={setIncludeOnline}
+              disabled={searchLoading}
+            />
+            <span className={styles['search-toolbar-label']}>同时搜全网</span>
+            <span
+              className={styles['search-toolbar-hint']}
+              title="开启后会实时检索全网并把优质结果沉淀入库，单次约 5~15 秒；关闭则只搜库内，通常 1 秒内返回"
+            >
+              {includeOnline ? '开启中：会实时拉全网，约 5~15 秒' : '已关闭：只搜库内，更快'}
+            </span>
+          </span>
+          <span className={styles['search-toolbar-divider']} />
+          <span className={styles['search-toolbar-group']}>
+            <Switch
+              size="small"
+              checked={excludeForeign}
+              onChange={setExcludeForeign}
+              disabled={searchLoading}
+            />
+            <span className={styles['search-toolbar-label']}>过滤外文</span>
+            <span
+              className={styles['search-toolbar-hint']}
+              title="开启后丢弃标题为外文的报道（如俄文、德文来源）。默认关闭，外文结果会正常展示"
+            >
+              {excludeForeign ? '已开启：只看中文报道' : '已关闭：外文结果也会展示'}
+            </span>
           </span>
         </div>
         {searchQuery && searchMeta && (
@@ -381,6 +404,9 @@ export default function NewsPage() {
                 : '关键词检索'}
             </Tag>
             {!searchMeta.vectorIndexed && <Tag color="orange">向量索引未就绪，已降级为关键词</Tag>}
+            {searchMeta.foreignFiltered > 0 && (
+              <Tag bordered={false}>已过滤外文 {searchMeta.foreignFiltered} 条</Tag>
+            )}
             <Button type="link" size="small" onClick={exitSearch}>
               返回列表
             </Button>

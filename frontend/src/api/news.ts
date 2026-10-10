@@ -117,6 +117,8 @@ export interface NewsSearchResponse {
   online_total?: number
   online_kept?: number
   persisted?: number
+  title_deduped?: number
+  foreign_filtered?: number
 }
 
 export const searchNews = async (params: {
@@ -126,6 +128,7 @@ export const searchNews = async (params: {
   impact_direction?: string
   limit?: number
   include_online?: boolean
+  exclude_foreign?: boolean
 }): Promise<NewsSearchResponse> => {
   // loading: false 用页面自己的检索态；cancelRepeat: false 避免快速连续检索被取消
   const res = await request.post<NewsSearchResponse>('/news/search', params, {

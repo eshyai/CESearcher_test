@@ -55,10 +55,18 @@ def get_kb_access(db: Session, kb_id, user: User, required_role: str = "viewer",
     if kb.user_id == user.id:
         role = "manager"
     else:
+        # 成员身份即生效：不再像早期那样额外要求 is_shared，
+        # 否则会出现"加了成员却依然访问不了"（is_shared 是隐形开关）。
         member = db.query(KnowledgeBaseMember).filter(
             KnowledgeBaseMember.knowledge_base_id == kb.id,
             KnowledgeBaseMember.user_id == user.id).first()
-        role = member.role if member and kb.is_shared else None
+        if member:
+            role = member.role
+        elif (kb.visibility or "private") == "team":
+            # 部门共享空间：部门内所有登录用户默认只读
+            role = "viewer"
+        else:
+            role = None
     if not role or ROLE_RANK[role] < ROLE_RANK[required_role]:
         raise HTTPException(status_code=403, detail="没有该知识库的操作权限")
     return kb, role
@@ -77,6 +85,7 @@ def kb_to_response(kb: KnowledgeBase, role: str = "manager") -> KnowledgeBaseRes
         description=kb.description,
         document_count=kb.document_count or 0,
         is_shared=kb.is_shared,
+        visibility=kb.visibility or "private",
         revision=kb.revision,
         role=role,
         created_at=kb.created_at,
@@ -155,15 +164,29 @@ async def get_knowledge_bases(
     current_user: User = Depends(get_current_user_required),
     db: Session = Depends(get_db),
 ):
-    """获取用户的知识库列表"""
+    """获取用户的知识库列表
+
+    可见范围 = 自己创建的 ∪ 显式加入的成员库 ∪ visibility=team 的部门共享库。
+    """
     memberships = {m.knowledge_base_id: m.role for m in db.query(KnowledgeBaseMember).filter(
         KnowledgeBaseMember.user_id == current_user.id).all()}
+    conds = [KnowledgeBase.user_id == current_user.id]
+    if memberships:
+        conds.append(KnowledgeBase.id.in_(list(memberships.keys())))
+    conds.append(KnowledgeBase.visibility == "team")
     kbs = db.query(KnowledgeBase).filter(
         KnowledgeBase.deleted_at.is_(None),
-        or_(KnowledgeBase.user_id == current_user.id,
-            KnowledgeBase.id.in_(list(memberships.keys())) if memberships else False)
+        or_(*conds),
     ).order_by(KnowledgeBase.updated_at.desc()).all()
-    return [kb_to_response(kb, "manager" if kb.user_id == current_user.id else memberships[kb.id]) for kb in kbs]
+
+    def _role_of(kb: KnowledgeBase) -> str:
+        if kb.user_id == current_user.id:
+            return "manager"
+        if kb.id in memberships:
+            return memberships[kb.id]
+        return "viewer"  # 团队可见库，未显式授权时默认只读
+
+    return [kb_to_response(kb, _role_of(kb)) for kb in kbs]
 
 
 @router.post("", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
@@ -190,10 +213,12 @@ async def create_knowledge_base(
         name=kb_data.name,
         description=kb_data.description,
         is_shared=kb_data.is_shared,
+        visibility=kb_data.visibility,
     )
     db.add(kb)
     db.flush()
-    add_audit(db, kb, current_user, "create", {"is_shared": kb.is_shared})
+    add_audit(db, kb, current_user, "create",
+              {"is_shared": kb.is_shared, "visibility": kb.visibility})
     db.commit()
     db.refresh(kb)
 
@@ -228,6 +253,7 @@ async def get_knowledge_base(
         description=kb.description,
         document_count=kb.document_count or 0,
         is_shared=kb.is_shared,
+        visibility=kb.visibility or "private",
         revision=kb.revision,
         role=role,
         created_at=kb.created_at,
@@ -255,9 +281,9 @@ async def update_knowledge_base(
     kb, role = get_kb_access(db, kb_uuid, current_user, "editor")
 
     if kb_data.name is not None:
-        # 检查是否与其他知识库重名
+        # 检查是否与其他知识库重名（以库的归属者为口径，成员改名时也查同一批）
         existing = db.query(KnowledgeBase).filter(
-            KnowledgeBase.user_id == current_user.id,
+            KnowledgeBase.user_id == kb.user_id,
             KnowledgeBase.name == kb_data.name,
             KnowledgeBase.id != kb_uuid
         ).first()
@@ -274,6 +300,10 @@ async def update_knowledge_base(
         if role != "manager":
             raise HTTPException(status_code=403, detail="只有管理员可以修改共享设置")
         kb.is_shared = kb_data.is_shared
+    if kb_data.visibility is not None:
+        if role != "manager":
+            raise HTTPException(status_code=403, detail="只有管理员可以修改可见性")
+        kb.visibility = kb_data.visibility
 
     kb.revision += 1
     add_audit(db, kb, current_user, "update", kb_data.model_dump(exclude_unset=True))
@@ -552,12 +582,26 @@ class MemberUpsert(BaseModel):
 @router.get("/{kb_id}/members")
 async def list_members(kb_id: UUID, current_user: User = Depends(get_current_user_required),
                        db: Session = Depends(get_db)):
-    kb, _ = get_kb_access(db, kb_id, current_user, "manager")
+    """查看成员名单。
+
+    放宽为 viewer 可读（只读）：editor/viewer 也需要知道该找谁，
+    否则无法 @人、也不知道协作范围。写操作仍要求 manager。
+    """
+    kb, _ = get_kb_access(db, kb_id, current_user, "viewer")
     members = db.query(KnowledgeBaseMember, User).join(
         User, User.id == KnowledgeBaseMember.user_id).filter(
         KnowledgeBaseMember.knowledge_base_id == kb.id).all()
-    return [{"user_id": str(user.id), "username": user.username, "role": member.role,
-             "created_at": member.created_at} for member, user in members]
+    owner = db.query(User).filter(User.id == kb.user_id).first()
+    result = []
+    if owner:
+        result.append({"user_id": str(owner.id), "username": owner.username,
+                       "role": "manager", "is_owner": True, "created_at": kb.created_at})
+    result.extend(
+        {"user_id": str(user.id), "username": user.username, "role": member.role,
+         "is_owner": False, "created_at": member.created_at}
+        for member, user in members
+    )
+    return result
 
 
 @router.put("/{kb_id}/members")

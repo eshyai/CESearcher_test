@@ -1,5 +1,5 @@
 """知识库相关 Schema"""
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,9 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="知识库名称")
     description: Optional[str] = Field(None, description="知识库描述")
     is_shared: bool = Field(False, description="是否允许成员共享访问")
+    visibility: Literal["private", "team"] = Field(
+        "private", description="可见性：private 仅创建者与成员；team 部门内登录用户均可只读"
+    )
 
 
 class KnowledgeBaseUpdate(BaseModel):
@@ -18,6 +21,7 @@ class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255, description="知识库名称")
     description: Optional[str] = Field(None, description="知识库描述")
     is_shared: Optional[bool] = Field(None, description="是否允许成员共享访问")
+    visibility: Optional[Literal["private", "team"]] = Field(None, description="可见性")
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -27,6 +31,7 @@ class KnowledgeBaseResponse(BaseModel):
     description: Optional[str] = Field(None, description="知识库描述")
     document_count: int = Field(0, description="文档数量")
     is_shared: bool = Field(False, description="是否共享")
+    visibility: str = Field("private", description="可见性：private | team")
     revision: int = Field(1, description="修订号")
     role: str = Field("manager", description="当前用户角色")
     created_at: datetime = Field(..., description="创建时间")

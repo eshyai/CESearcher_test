@@ -18,6 +18,10 @@ class KnowledgeBase(Base):
     description = Column(Text)
     document_count = Column(Integer, default=0)
     is_shared = Column(Boolean, nullable=False, default=False)
+    # 可见性：private（默认，仅创建者 + 显式成员）| team（部门内所有登录用户可见，默认 viewer）
+    # 与 is_shared 的区别：is_shared 是"是否启用成员名单"的历史字段，
+    # visibility 决定是否对全部门开放只读。两者互不替代。
+    visibility = Column(String(20), nullable=False, default="private")
     revision = Column(Integer, nullable=False, default=1)
     deleted_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
