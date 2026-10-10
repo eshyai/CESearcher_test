@@ -313,9 +313,21 @@ export default function NewsPage() {
   ) => {
     event.stopPropagation()
     try {
-      await api.news.submitNewsFeedback(item.id, payload)
+      const result = await api.news.submitNewsFeedback(item.id, payload)
       await fetchNews()
-      message.success('反馈已记录，将用于优化推荐')
+      const created = result?.created_topics ?? []
+      const retired = result?.retired_topics ?? []
+      if (created.length) {
+        // L1.5：没有任何主题命中时，系统从这条资讯里自动派生候选主题
+        message.success({
+          content: `已自动为你新增关注主题：${created.map((topic) => topic.name).join('、')}，可在「我的关注」确认或删除`,
+          duration: 4,
+        })
+      } else if (retired.length) {
+        message.info(`已自动停用不再需要的关注主题：${retired.map((topic) => topic.name).join('、')}`)
+      } else {
+        message.success('反馈已记录，将用于优化推荐')
+      }
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '反馈保存失败')
     }

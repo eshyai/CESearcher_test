@@ -28,10 +28,24 @@
     margin-bottom: 16px;
   }
 
+  .toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+  }
+
   .topic-cell {
     .topic-name {
       font-weight: 500;
       color: #262626;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      .auto-tag {
+        margin-inline-end: 0;
+        font-weight: 400;
+      }
     }
 
     .topic-query {

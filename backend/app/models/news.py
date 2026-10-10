@@ -142,7 +142,7 @@ class NewsCollectionTask(Base):
 
 
 class FocusTopic(Base):
-    """用户显式维护的关注主题。"""
+    """用户关注主题：``source='manual'`` 为用户手动创建，``'auto'`` 为反馈自动派生。"""
     __tablename__ = "focus_topics"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -153,6 +153,13 @@ class FocusTopic(Base):
     positive_count = Column(Integer, nullable=False, default=0)
     negative_count = Column(Integer, nullable=False, default=0)
     is_active = Column(Boolean, nullable=False, default=True)
+    # ===== L1.5：反馈自动派生的候选主题（docker/init-db/06-focus-topic-source.sql）=====
+    source = Column(String(20), nullable=False, default="manual", index=True,
+                    comment="来源：manual=用户手动创建 / auto=反馈自动派生")
+    origin_news_id = Column(UUID(as_uuid=True),
+                            ForeignKey("industry_news.id", ondelete="SET NULL"),
+                            nullable=True, comment="自动主题的触发资讯（可解释性）")
+    auto_hits = Column(Integer, nullable=False, default=0, comment="被反馈命中的次数（自动主题）")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "topic_type", "name", name="uq_focus_topic_user_type_name"),)

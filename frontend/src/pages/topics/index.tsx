@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Card,
   Button,
@@ -14,12 +14,17 @@ import {
   Progress,
   Popconfirm,
   Alert,
+  Segmented,
+  Tooltip,
+  Empty,
 } from 'antd'
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   StarOutlined,
+  ThunderboltOutlined,
+  CheckOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import * as api from '@/api'
@@ -40,12 +45,15 @@ const TOPIC_TYPE_OPTIONS = Object.entries(TOPIC_TYPE_META).map(([value, meta]) =
   label: meta.label,
 }))
 
+type SourceFilter = 'all' | 'manual' | 'auto'
+
 export default function TopicsPage() {
   const [topics, setTopics] = useState<FocusTopic[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<FocusTopic | null>(null)
   const [saving, setSaving] = useState(false)
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [form] = Form.useForm()
 
   const fetchTopics = useCallback(async () => {
@@ -63,6 +71,16 @@ export default function TopicsPage() {
   useEffect(() => {
     fetchTopics()
   }, [fetchTopics])
+
+  const autoCount = topics.filter((topic) => (topic.source || 'manual') === 'auto').length
+
+  const visibleTopics = useMemo(
+    () =>
+      sourceFilter === 'all'
+        ? topics
+        : topics.filter((topic) => (topic.source || 'manual') === sourceFilter),
+    [topics, sourceFilter],
+  )
 
   const openCreate = () => {
     setEditing(null)
@@ -131,6 +149,17 @@ export default function TopicsPage() {
     }
   }
 
+  // 把系统自动派生的候选主题确认为正式关注
+  const handleConfirm = async (topic: FocusTopic) => {
+    try {
+      await api.news.updateFocusTopic(topic.id, { source: 'manual' })
+      message.success(`「${topic.name}」已确认为正式关注`)
+      await fetchTopics()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '操作失败')
+    }
+  }
+
   const columns: ColumnsType<FocusTopic> = [
     {
       title: '关注主题',
@@ -138,7 +167,16 @@ export default function TopicsPage() {
       key: 'name',
       render: (_, record) => (
         <div className={styles['topic-cell']}>
-          <div className={styles['topic-name']}>{record.name}</div>
+          <div className={styles['topic-name']}>
+            {record.name}
+            {(record.source || 'manual') === 'auto' && (
+              <Tooltip title="系统根据你对资讯的反馈自动派生。确认后即为正式关注主题，权重与匹配词都可编辑。">
+                <Tag className={styles['auto-tag']} color="orange" icon={<ThunderboltOutlined />}>
+                  自动派生
+                </Tag>
+              </Tooltip>
+            )}
+          </div>
           <div className={styles['topic-query']}>匹配词：{record.query_text}</div>
         </div>
       ),
@@ -153,10 +191,22 @@ export default function TopicsPage() {
       ),
     },
     {
+      title: '来源',
+      dataIndex: 'source',
+      key: 'source',
+      width: 100,
+      render: (source: FocusTopic['source']) =>
+        (source || 'manual') === 'auto' ? (
+          <Tag color="orange">自动派生</Tag>
+        ) : (
+          <Tag>手动创建</Tag>
+        ),
+    },
+    {
       title: '关注权重',
       dataIndex: 'weight',
       key: 'weight',
-      width: 220,
+      width: 200,
       render: (weight: number) => (
         <div className={styles['weight-cell']}>
           {/* 权重范围 [-2, 2]，归一化到 [0, 100%] 展示 */}
@@ -192,9 +242,20 @@ export default function TopicsPage() {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 240,
       render: (_, record) => (
         <Space size={4}>
+          {(record.source || 'manual') === 'auto' && (
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<CheckOutlined />}
+              onClick={() => handleConfirm(record)}
+            >
+              确认关注
+            </Button>
+          )}
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑
           </Button>
@@ -222,6 +283,11 @@ export default function TopicsPage() {
         <div className={styles['header-left']}>
           <StarOutlined style={{ fontSize: 24, marginRight: 12 }} />
           <h2>我的关注</h2>
+          {autoCount > 0 && (
+            <Tag color="orange" icon={<ThunderboltOutlined />}>
+              {autoCount} 条自动派生
+            </Tag>
+          )}
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新增关注
@@ -233,17 +299,47 @@ export default function TopicsPage() {
         type="info"
         showIcon
         message="AI 如何自我成长"
-        description="你在资讯页点击「感兴趣 / 不感兴趣」后，系统按有界规则更新相关主题权重：新权重 = clamp(0.85 × 旧权重 + 0.35 × 反馈, -2, 2)。权重越高的主题，相关资讯在资讯流中排序越靠前。整个过程透明、可解释、可回滚——删除主题或调整权重即可改变推荐结果。"
+        description={
+          <>
+            在资讯页点击「感兴趣 / 不感兴趣」后，系统会做两件事：① 按有界规则更新相关主题权重——
+            新权重 = clamp(0.85 × 旧权重 + 0.35 × 反馈, -2, 2)，权重越高的主题，相关资讯排序越靠前；
+            ② 若这条资讯没有任何主题命中，则从资讯内容里
+            <strong>自动派生候选关注主题</strong>（标为「自动派生」，初始权重 0.5），
+            让你不必先去手动建主题再点反馈。自动主题被反复否定会自动停用，手动创建的主题永远不会被自动停用。
+            全过程透明、可解释、可回滚——确认、编辑、停用或删除任意主题即可改变推荐结果。
+          </>
+        }
       />
 
       <Card>
+        <div className={styles.toolbar}>
+          <Segmented
+            value={sourceFilter}
+            onChange={(value) => setSourceFilter(value as SourceFilter)}
+            options={[
+              { label: `全部 (${topics.length})`, value: 'all' },
+              { label: `手动创建 (${topics.length - autoCount})`, value: 'manual' },
+              { label: `自动派生 (${autoCount})`, value: 'auto' },
+            ]}
+          />
+        </div>
         <Table<FocusTopic>
           rowKey="id"
           loading={loading}
           columns={columns}
-          dataSource={topics}
+          dataSource={visibleTopics}
           pagination={false}
-          locale={{ emptyText: '还没有关注主题，点击右上角「新增关注」开始吧' }}
+          locale={{
+            emptyText: (
+              <Empty
+                description={
+                  sourceFilter === 'auto'
+                    ? '还没有自动派生的主题。去资讯页对内容点「感兴趣」，系统会自动帮你长出关注主题'
+                    : '还没有关注主题，点击右上角「新增关注」开始吧'
+                }
+              />
+            ),
+          }}
         />
       </Card>
 
@@ -277,7 +373,7 @@ export default function TopicsPage() {
             name="query_text"
             label="匹配词"
             rules={[{ required: true, message: '请输入匹配词' }]}
-            extra="用于匹配资讯标题/正文的关键词，可填写多个词（以空格分隔）"
+            extra="用于匹配资讯标题/正文的关键词，可填写多个词（以空格分隔）。系统内置化工同义词表，写 PA6 也能匹配到「尼龙6 / 聚酰胺6」"
           >
             <Input.TextArea rows={2} placeholder="例如：MDI 价格 装置" />
           </Form.Item>

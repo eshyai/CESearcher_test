@@ -248,7 +248,15 @@ export const submitNewsFeedback = async (
   const res = await request.post(`/intelligence/news/${newsId}/feedback`, payload, {
     loading: false,
   })
-  return res.data
+  return res.data as {
+    success: boolean
+    /** 权重被更新的已有主题 */
+    updated_topics: FocusTopic[]
+    /** L1.5：本次由反馈自动派生的候选主题 */
+    created_topics: FocusTopic[]
+    /** L1.5：被负反馈自动停用的候选主题 */
+    retired_topics: FocusTopic[]
+  }
 }
 
 export interface FocusTopic {
@@ -260,10 +268,22 @@ export interface FocusTopic {
   positive_count: number
   negative_count: number
   is_active: boolean
+  /** manual=用户手动创建；auto=反馈自动派生（L1.5） */
+  source: 'manual' | 'auto'
+  /** 自动主题的触发资讯 id（可解释性） */
+  origin_news_id?: string | null
+  /** 自动主题被反馈命中的次数 */
+  auto_hits?: number
 }
 
-export const getFocusTopics = async (): Promise<FocusTopic[]> => {
-  const res = await request.get<FocusTopic[]>('/intelligence/topics', { loading: false })
+export const getFocusTopics = async (params?: {
+  source?: 'manual' | 'auto'
+  include_inactive?: boolean
+}): Promise<FocusTopic[]> => {
+  const res = await request.get<FocusTopic[]>('/intelligence/topics', {
+    loading: false,
+    params,
+  })
   return res.data
 }
 
@@ -279,7 +299,13 @@ export const createFocusTopic = async (payload: {
 
 export const updateFocusTopic = async (
   topicId: string,
-  payload: { query_text?: string; weight?: number; is_active?: boolean },
+  payload: {
+    query_text?: string
+    weight?: number
+    is_active?: boolean
+    /** 把自动派生的候选主题「确认为关注」（auto -> manual） */
+    source?: FocusTopic['source']
+  },
 ): Promise<FocusTopic> => {
   const res = await request.patch<FocusTopic>(`/intelligence/topics/${topicId}`, payload)
   return res.data

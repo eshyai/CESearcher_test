@@ -26,6 +26,8 @@ class TopicUpdate(BaseModel):
     query_text: str | None = Field(default=None, min_length=1, max_length=2000)
     weight: float | None = Field(default=None, ge=-2, le=2)
     is_active: bool | None = None
+    # L1.5：把自动派生的候选主题「确认」为正式关注（auto -> manual）
+    source: Literal["manual", "auto"] | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -45,16 +47,23 @@ def topic_dict(topic: FocusTopic) -> dict:
             "query_text": topic.query_text, "weight": topic.weight,
             "positive_count": topic.positive_count, "negative_count": topic.negative_count,
             "is_active": topic.is_active, "created_at": topic.created_at,
-            "updated_at": topic.updated_at}
+            "updated_at": topic.updated_at,
+            # L1.5
+            "source": topic.source or "manual",
+            "origin_news_id": str(topic.origin_news_id) if topic.origin_news_id else None,
+            "auto_hits": topic.auto_hits or 0}
 
 
 @router.get("/topics")
 async def list_topics(include_inactive: bool = Query(False),
+                      source: Literal["manual", "auto"] | None = Query(None, description="按来源筛选"),
                       current_user: User = Depends(get_current_user_required),
                       db: Session = Depends(get_db)):
     query = db.query(FocusTopic).filter(FocusTopic.user_id == current_user.id)
     if not include_inactive:
         query = query.filter(FocusTopic.is_active.is_(True))
+    if source:
+        query = query.filter(FocusTopic.source == source)
     return [topic_dict(topic) for topic in query.order_by(FocusTopic.weight.desc()).all()]
 
 
@@ -66,7 +75,16 @@ async def create_topic(payload: TopicCreate,
         FocusTopic.user_id == current_user.id, FocusTopic.topic_type == payload.topic_type,
         FocusTopic.name == payload.name).first()
     if existing:
-        raise HTTPException(status_code=409, detail="同类型关注主题已存在")
+        if (existing.source or "manual") != "auto":
+            raise HTTPException(status_code=409, detail="同类型关注主题已存在")
+        # 该主题是系统自动派生的：视为用户「确认关注」，升级为手动主题
+        existing.source = "manual"
+        existing.query_text = payload.query_text
+        existing.weight = payload.weight
+        existing.is_active = True
+        db.commit()
+        db.refresh(existing)
+        return topic_dict(existing)
     topic = FocusTopic(user_id=current_user.id, **payload.model_dump())
     db.add(topic)
     db.commit()
@@ -112,11 +130,13 @@ async def save_news_feedback(news_id: UUID, payload: FeedbackRequest,
     existing = db.query(NewsFeedback).filter(
         NewsFeedback.news_id == news_id, NewsFeedback.user_id == current_user.id).first()
     fields = payload.model_fields_set
-    feedback, changed = FeedbackLearningService(db).save_feedback(
+    feedback, changed, created, retired = FeedbackLearningService(db).save_feedback(
         news=news, user_id=current_user.id,
         interested=payload.interested if "interested" in fields else (existing.interested if existing else None),
         relevant=payload.relevant if "relevant" in fields else (existing.relevant if existing else None),
         note=payload.note if "note" in fields else (existing.note if existing else None))
     return {"success": True, "feedback": {"news_id": str(feedback.news_id),
             "interested": feedback.interested, "relevant": feedback.relevant,
-            "note": feedback.note}, "updated_topics": [topic_dict(t) for t in changed]}
+            "note": feedback.note}, "updated_topics": [topic_dict(t) for t in changed],
+            "created_topics": [topic_dict(t) for t in created],
+            "retired_topics": [topic_dict(t) for t in retired]}
