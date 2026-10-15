@@ -11,6 +11,7 @@ from models.news import FocusTopic, IndustryNews, NewsFeedback
 from models.user import User
 from router.auth_router import get_current_user_required
 from service.feedback_learning_service import FeedbackLearningService
+from service.lma_induction_service import LmaInductionService
 
 router = APIRouter(prefix="/intelligence", tags=["资讯智能学习"])
 
@@ -140,3 +141,92 @@ async def save_news_feedback(news_id: UUID, payload: FeedbackRequest,
             "note": feedback.note}, "updated_topics": [topic_dict(t) for t in changed],
             "created_topics": [topic_dict(t) for t in created],
             "retired_topics": [topic_dict(t) for t in retired]}
+
+
+# ===========================================================================
+# L2a 归纳引擎（LLM 慢回路）：建议箱 + 归纳历史 + 回滚
+# 注意：归纳会同步调用大模型（数秒到数十秒），端点必须是同步 def，
+#      写成 async 会阻塞事件循环（与 /news/search 同理）。
+# ===========================================================================
+
+class InductionRequest(BaseModel):
+    # 手动触发时是否忽略「攒批阈值」直接归纳
+    force: bool = True
+
+
+@router.get("/induction/status")
+async def induction_status(current_user: User = Depends(get_current_user_required),
+                           db: Session = Depends(get_db)):
+    """是否该归纳了：待归纳反馈数、距上次天数、待确认建议数。"""
+    return LmaInductionService(db).induction_status(current_user.id)
+
+
+@router.post("/induction")
+def run_induction(payload: InductionRequest | None = None,
+                  current_user: User = Depends(get_current_user_required),
+                  db: Session = Depends(get_db)):
+    """跑一次归纳：产出建议进「待确认」箱，并留一张可回滚快照。
+
+    模型**不会**直接修改关注主题；用户逐条接受后才落库。
+    """
+    force = payload.force if payload else True
+    result = LmaInductionService(db).induct(
+        current_user.id, trigger="manual", force=force)
+    # 业务性失败（没样本 / 模型不可用）用 200 + ok=false 返回，便于前端给提示
+    return result
+
+
+@router.get("/suggestions")
+async def list_suggestions(status: Literal["pending", "accepted", "rejected", "all"] = Query("pending"),
+                           kind: Literal["add", "adjust", "merge", "drop", "insight"] | None = Query(None),
+                           current_user: User = Depends(get_current_user_required),
+                           db: Session = Depends(get_db)):
+    return LmaInductionService(db).list_suggestions(
+        current_user.id, status=status, kind=kind)
+
+
+@router.post("/suggestions/{suggestion_id}/accept")
+async def accept_suggestion(suggestion_id: UUID,
+                            current_user: User = Depends(get_current_user_required),
+                            db: Session = Depends(get_db)):
+    try:
+        return {"success": True, **LmaInductionService(db).accept_suggestion(
+            suggestion_id, current_user.id)}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/suggestions/{suggestion_id}/reject")
+async def reject_suggestion(suggestion_id: UUID,
+                            current_user: User = Depends(get_current_user_required),
+                            db: Session = Depends(get_db)):
+    try:
+        return {"success": True, **LmaInductionService(db).reject_suggestion(
+            suggestion_id, current_user.id)}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/revisions")
+async def list_revisions(limit: int = Query(20, ge=1, le=100),
+                         current_user: User = Depends(get_current_user_required),
+                         db: Session = Depends(get_db)):
+    return LmaInductionService(db).list_revisions(current_user.id, limit=limit)
+
+
+@router.post("/revisions/{revision_id}/rollback")
+async def rollback_revision(revision_id: UUID,
+                            current_user: User = Depends(get_current_user_required),
+                            db: Session = Depends(get_db)):
+    """回滚到某次归纳之前（精确撤销该次归纳的影响，不误伤之后手动建的主题）。"""
+    try:
+        return {"success": True, **LmaInductionService(db).rollback_revision(
+            revision_id, current_user.id)}
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

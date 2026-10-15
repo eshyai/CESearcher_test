@@ -17,6 +17,12 @@ import {
   Segmented,
   Tooltip,
   Empty,
+  Badge,
+  Drawer,
+  List,
+  Divider,
+  Spin,
+  Typography,
 } from 'antd'
 import {
   PlusOutlined,
@@ -25,10 +31,20 @@ import {
   StarOutlined,
   ThunderboltOutlined,
   CheckOutlined,
+  CloseOutlined,
+  HistoryOutlined,
+  RobotOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import * as api from '@/api'
-import type { FocusTopic } from '@/api/news'
+import type {
+  FocusTopic,
+  PreferenceSuggestion,
+  FocusTopicRevision,
+  InductionStatus,
+  SuggestionKind,
+} from '@/api/news'
 import styles from './index.module.scss'
 
 // 主题类型元信息
@@ -45,7 +61,54 @@ const TOPIC_TYPE_OPTIONS = Object.entries(TOPIC_TYPE_META).map(([value, meta]) =
   label: meta.label,
 }))
 
+// L2a 建议类型元信息
+const SUGGESTION_META: Record<
+  SuggestionKind,
+  { label: string; color: string; accept: string; soon: string }
+> = {
+  add: { label: '新增关注', color: 'green', accept: '采纳并新增', soon: '新增中' },
+  adjust: { label: '调整权重', color: 'blue', accept: '采纳调整', soon: '调整中' },
+  merge: { label: '合并同义', color: 'purple', accept: '采纳合并', soon: '合并中' },
+  drop: { label: '建议停用', color: 'volcano', accept: '采纳停用', soon: '停用中' },
+  insight: { label: '画像结论', color: 'gold', accept: '知道了', soon: '处理中' },
+}
+
 type SourceFilter = 'all' | 'manual' | 'auto'
+
+// 把建议的 payload 翻成人话，让用户能预判「采纳后会发生什么」
+function describeSuggestion(item: PreferenceSuggestion): string {
+  const p = item.payload || {}
+  switch (item.kind) {
+    case 'add': {
+      const type = TOPIC_TYPE_META[p.topic_type as FocusTopic['topic_type']]?.label || p.topic_type
+      const weight = typeof p.weight === 'number' ? p.weight.toFixed(2) : '1.00'
+      return `新增关注主题「${item.name}」（类型：${type || '未定'}，初始权重 ${weight}）`
+    }
+    case 'adjust': {
+      const from = Number(p.from_weight ?? 0)
+      const delta = Number(p.delta ?? 0)
+      const to = Math.max(-2, Math.min(2, from + delta))
+      return `「${item.name}」权重 ${from.toFixed(2)} → ${to.toFixed(2)}`
+    }
+    case 'merge': {
+      const targets = Array.isArray(p.targets) ? p.targets : []
+      const others = targets.filter((t: string) => t !== p.into)
+      return `把「${others.join('、') || '同义写法'}」并入「${p.into || item.name}」，合并后仅保留一条主题（原写法作为别名保留）`
+    }
+    case 'drop': {
+      const from = Number(p.from_weight ?? 0)
+      return `停用「${item.name}」（当前权重 ${from.toFixed(2)}，停用后不再参与资讯排序，可随时手动启用）`
+    }
+    case 'insight':
+      return item.name
+    default:
+      return item.name
+  }
+}
+
+function revisionKindLabel(kind: string): string {
+  return SUGGESTION_META[kind as SuggestionKind]?.label || kind
+}
 
 export default function TopicsPage() {
   const [topics, setTopics] = useState<FocusTopic[]>([])
@@ -55,6 +118,16 @@ export default function TopicsPage() {
   const [saving, setSaving] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [form] = Form.useForm()
+
+  // L2a 状态
+  const [status, setStatus] = useState<InductionStatus | null>(null)
+  const [suggestions, setSuggestions] = useState<PreferenceSuggestion[]>([])
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false)
+  const [actingId, setActingId] = useState<string | null>(null)
+  const [inducting, setInducting] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [revisions, setRevisions] = useState<FocusTopicRevision[]>([])
+  const [revisionsLoading, setRevisionsLoading] = useState(false)
 
   const fetchTopics = useCallback(async () => {
     setLoading(true)
@@ -68,9 +141,29 @@ export default function TopicsPage() {
     }
   }, [])
 
+  const fetchInduction = useCallback(async () => {
+    setSuggestionsLoading(true)
+    try {
+      const [st, list] = await Promise.all([
+        api.news.getInductionStatus(),
+        api.news.getSuggestions({ status: 'pending' }),
+      ])
+      setStatus(st)
+      setSuggestions(list)
+    } catch (error: any) {
+      // 401 已由全局拦截器处理，这里只提示业务错误
+      if (error?.response?.status !== 401) {
+        message.error(error?.response?.data?.detail || '获取归纳建议失败')
+      }
+    } finally {
+      setSuggestionsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchTopics()
-  }, [fetchTopics])
+    fetchInduction()
+  }, [fetchTopics, fetchInduction])
 
   const autoCount = topics.filter((topic) => (topic.source || 'manual') === 'auto').length
 
@@ -157,6 +250,81 @@ export default function TopicsPage() {
       await fetchTopics()
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '操作失败')
+    }
+  }
+
+  // ---- L2a：运行归纳 ----
+  const handleInduct = async () => {
+    setInducting(true)
+    try {
+      const res = await api.news.runInduction(true)
+      if (res?.ok) {
+        const n = res.created ?? 0
+        if (n > 0) {
+          message.success(`归纳完成，产出 ${n} 条待确认建议`)
+        } else {
+          message.info('归纳完成，没有新的建议（已有建议仍在待确认）')
+        }
+      } else {
+        message.warning(res?.message || '本次归纳没有产出')
+      }
+      await fetchInduction()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '归纳失败，请稍后重试')
+    } finally {
+      setInducting(false)
+    }
+  }
+
+  // ---- L2a：接受 / 拒绝建议 ----
+  const handleAccept = async (item: PreferenceSuggestion) => {
+    setActingId(item.id)
+    try {
+      const res = await api.news.acceptSuggestion(item.id)
+      message.success(res?.detail || '已采纳')
+      await Promise.all([fetchInduction(), fetchTopics()])
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '采纳失败')
+    } finally {
+      setActingId(null)
+    }
+  }
+
+  const handleReject = async (item: PreferenceSuggestion) => {
+    setActingId(item.id)
+    try {
+      const res = await api.news.rejectSuggestion(item.id)
+      message.success(res?.detail || '已忽略')
+      await fetchInduction()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '操作失败')
+    } finally {
+      setActingId(null)
+    }
+  }
+
+  // ---- L2a：归纳历史与回滚 ----
+  const openHistory = async () => {
+    setHistoryOpen(true)
+    setRevisionsLoading(true)
+    try {
+      setRevisions(await api.news.getRevisions(30))
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '获取归纳历史失败')
+    } finally {
+      setRevisionsLoading(false)
+    }
+  }
+
+  const handleRollback = async (revision: FocusTopicRevision) => {
+    try {
+      const res = await api.news.rollbackRevision(revision.id)
+      const removed = res?.removed?.length ?? 0
+      const restored = res?.restored?.length ?? 0
+      message.success(`已回滚：移除 ${removed} 条新增主题，还原 ${restored} 条主题`)
+      await Promise.all([openHistory(), fetchInduction(), fetchTopics()])
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '回滚失败')
     }
   }
 
@@ -277,6 +445,16 @@ export default function TopicsPage() {
     },
   ]
 
+  const pendingCount = suggestions.length
+  const statusText = (() => {
+    if (!status) return ''
+    if (!status.last_inducted_at) {
+      return `还没归纳过 · 已有 ${status.pending_feedback} 条反馈（攒到 ${status.threshold} 条会自动归纳）`
+    }
+    const days = status.days_since_last ?? 0
+    return `距上次归纳 ${days} 天 · 新增反馈 ${status.pending_feedback} 条（阈值 ${status.threshold}）`
+  })()
+
   return (
     <div className={styles['topics-page']}>
       <div className={styles.header}>
@@ -289,9 +467,19 @@ export default function TopicsPage() {
             </Tag>
           )}
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新增关注
-        </Button>
+        <Space>
+          <Badge count={pendingCount} size="small" offset={[-4, 4]}>
+            <Button icon={<ReloadOutlined />} onClick={fetchInduction}>
+              刷新
+            </Button>
+          </Badge>
+          <Button icon={<HistoryOutlined />} onClick={openHistory}>
+            归纳历史
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增关注
+          </Button>
+        </Space>
       </div>
 
       <Alert
@@ -310,6 +498,112 @@ export default function TopicsPage() {
           </>
         }
       />
+
+      {/* L2a：AI 归纳建议箱（模型不直接改数据，全部待人工确认） */}
+      <Card
+        className={styles['induction-card']}
+        title={
+          <Space size={8}>
+            <RobotOutlined />
+            <span>AI 归纳建议</span>
+            {pendingCount > 0 && <Badge count={pendingCount} />}
+          </Space>
+        }
+        extra={
+          <Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {statusText}
+            </Typography.Text>
+            <Tooltip title="让模型回顾你最近的反馈，产出「新增 / 调权重 / 合并 / 停用 / 画像结论」建议。模型不会直接改你的关注主题，全部等你逐条确认。">
+              <Button
+                type="primary"
+                ghost
+                icon={<ThunderboltOutlined />}
+                loading={inducting}
+                onClick={handleInduct}
+              >
+                {inducting ? '正在归纳…' : '运行 AI 归纳'}
+              </Button>
+            </Tooltip>
+          </Space>
+        }
+      >
+        <Spin spinning={suggestionsLoading}>
+          {pendingCount === 0 ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={
+                <span>
+                  暂无待确认建议。这是正常的——模型只在积累到一定反馈量后才会归纳。
+                  <br />
+                  你可以点右上角「运行 AI 归纳」立即跑一次。
+                </span>
+              }
+            />
+          ) : (
+            <List
+              dataSource={suggestions}
+              renderItem={(item) => {
+                const meta = SUGGESTION_META[item.kind] || SUGGESTION_META.insight
+                const busy = actingId === item.id
+                return (
+                  <List.Item
+                    key={item.id}
+                    actions={[
+                      <Button
+                        key="accept"
+                        type="primary"
+                        size="small"
+                        icon={<CheckOutlined />}
+                        loading={busy}
+                        onClick={() => handleAccept(item)}
+                      >
+                        {meta.accept}
+                      </Button>,
+                      <Button
+                        key="reject"
+                        size="small"
+                        icon={<CloseOutlined />}
+                        disabled={busy}
+                        onClick={() => handleReject(item)}
+                      >
+                        忽略
+                      </Button>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      title={
+                        <Space size={8} wrap>
+                          <Tag color={meta.color}>{meta.label}</Tag>
+                          <span className={styles['suggestion-name']}>{item.name}</span>
+                          <Tooltip title={`模型自评置信度 ${(item.confidence * 100).toFixed(0)}%`}>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              置信度 {(item.confidence * 100).toFixed(0)}%
+                            </Typography.Text>
+                          </Tooltip>
+                          {item.evidence?.length > 0 && (
+                            <Tooltip title="支撑这条建议的反馈条数（来自你点过的感兴趣 / 不感兴趣）">
+                              <Tag>{item.evidence.length} 条反馈支撑</Tag>
+                            </Tooltip>
+                          )}
+                        </Space>
+                      }
+                      description={
+                        <div className={styles['suggestion-body']}>
+                          <div>{describeSuggestion(item)}</div>
+                          {item.reason && (
+                            <div className={styles['suggestion-reason']}>理由：{item.reason}</div>
+                          )}
+                        </div>
+                      }
+                    />
+                  </List.Item>
+                )
+              }}
+            />
+          )}
+        </Spin>
+      </Card>
 
       <Card>
         <div className={styles.toolbar}>
@@ -342,6 +636,89 @@ export default function TopicsPage() {
           }}
         />
       </Card>
+
+      {/* 归纳历史：每次归纳留一张快照，可一键撤销该次归纳的影响 */}
+      <Drawer
+        title="归纳历史"
+        width={520}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        extra={
+          <Button size="small" icon={<ReloadOutlined />} onClick={openHistory}>
+            刷新
+          </Button>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="回滚是精确回退"
+          description="回滚只会撤销「该次归纳」带来的改动（删除其新增的主题、还原它改过的权重与状态），你在归纳之后手动新建或修改的主题不受影响。"
+        />
+        <Spin spinning={revisionsLoading}>
+          {revisions.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有归纳记录" />
+          ) : (
+            <List
+              dataSource={revisions}
+              renderItem={(rev) => (
+                <div className={styles['revision-item']}>
+                  <div className={styles['revision-head']}>
+                    <Space size={6} wrap>
+                      <Tag color={rev.current ? 'blue' : 'default'}>
+                        {rev.current ? '当前基线' : rev.trigger === 'manual' ? '手动' : '自动'}
+                      </Tag>
+                      <Tag color={rev.status === 'rolled_back' ? 'default' : 'green'}>
+                        {rev.status === 'rolled_back' ? '已回滚' : '已应用'}
+                      </Tag>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {rev.created_at ? new Date(rev.created_at).toLocaleString() : ''}
+                      </Typography.Text>
+                    </Space>
+                  </div>
+                  <div className={styles['revision-meta']}>
+                    样本 {rev.sample_count} 条反馈 · 主题 {rev.topic_count} 个 · 产出{' '}
+                    {rev.diff?.length ?? 0} 条建议
+                  </div>
+                  {rev.summary && (
+                    <div className={styles['revision-summary']}>结论：{rev.summary}</div>
+                  )}
+                  {rev.error && (
+                    <div className={styles['revision-error']}>未产出：{rev.error}</div>
+                  )}
+                  {rev.diff?.length > 0 && (
+                    <div className={styles['revision-diff']}>
+                      {rev.diff.map((d, i) => (
+                        <Tag key={i} style={{ marginBottom: 4 }}>
+                          {revisionKindLabel(d.kind)}：{d.name}
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+                  {rev.status !== 'rolled_back' && (
+                    <>
+                      <Divider style={{ margin: '8px 0' }} />
+                      <Popconfirm
+                        title="确认回滚这次归纳？"
+                        description="将删除该次归纳新增的主题，并还原它修改过的权重与状态。"
+                        okText="回滚"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                        onConfirm={() => handleRollback(rev)}
+                      >
+                        <Button size="small" danger>
+                          回滚到这次归纳之前
+                        </Button>
+                      </Popconfirm>
+                    </>
+                  )}
+                </div>
+              )}
+            />
+          )}
+        </Spin>
+      </Drawer>
 
       <Modal
         title={editing ? '编辑关注主题' : '新增关注主题'}

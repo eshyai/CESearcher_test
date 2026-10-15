@@ -28,6 +28,60 @@
     margin-bottom: 16px;
   }
 
+  .induction-card {
+    margin-bottom: 16px;
+
+    .suggestion-name {
+      font-weight: 500;
+      color: #262626;
+    }
+
+    .suggestion-body {
+      font-size: 13px;
+      color: #595959;
+
+      .suggestion-reason {
+        margin-top: 2px;
+        font-size: 12px;
+        color: #8c8c8c;
+      }
+    }
+  }
+
+  .revision-item {
+    padding: 10px 0;
+    border-bottom: 1px solid #f0f0f0;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    .revision-head {
+      margin-bottom: 4px;
+    }
+
+    .revision-meta {
+      font-size: 12px;
+      color: #595959;
+    }
+
+    .revision-summary {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #262626;
+    }
+
+    .revision-error {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #d4380d;
+    }
+
+    .revision-diff {
+      margin-top: 6px;
+    }
+  }
+
   .toolbar {
     display: flex;
     justify-content: flex-end;

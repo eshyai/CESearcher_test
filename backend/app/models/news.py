@@ -160,6 +160,9 @@ class FocusTopic(Base):
                             ForeignKey("industry_news.id", ondelete="SET NULL"),
                             nullable=True, comment="自动主题的触发资讯（可解释性）")
     auto_hits = Column(Integer, nullable=False, default=0, comment="被反馈命中的次数（自动主题）")
+    # ===== L2a：由「归纳建议」落地的主题（docker/init-db/07-lma-induction.sql）=====
+    suggestion_id = Column(UUID(as_uuid=True), nullable=True, index=True,
+                           comment="产生该主题的偏好建议 id（归纳建议 add 落地时写入，用于解释与回滚）")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "topic_type", "name", name="uq_focus_topic_user_type_name"),)
@@ -177,3 +180,57 @@ class NewsFeedback(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("news_id", "user_id", name="uq_news_feedback_news_user"),)
+
+
+class FocusTopicRevision(Base):
+    """L2a 归纳快照：每次归纳前拍一张关注主题的全量快照，用于一键回滚。
+
+    模型永远不直接改数据，只产出「建议」；用户接受建议后才会写 ``focus_topics``。
+    回滚时按本表的 ``snapshot`` 把该用户的主题集合恢复成归纳当刻的状态。
+    """
+    __tablename__ = "focus_topic_revisions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    trigger = Column(String(30), nullable=False, default="manual",
+                     comment="触发方式：manual=手动 / batch=攒批(反馈数达标) / schedule=超过间隔天数")
+    sample_count = Column(Integer, nullable=False, default=0, comment="本次归纳使用的反馈样本数")
+    topic_count = Column(Integer, nullable=False, default=0, comment="快照时的主题数")
+    current = Column(Boolean, nullable=False, default=True, index=True,
+                     comment="是否为该用户最新一次归纳（回滚时以此判断）")
+    status = Column(String(20), nullable=False, default="applied", index=True,
+                    comment="applied=生效中 / rolled_back=已回滚")
+    snapshot = Column(Text, comment="归纳前的主题全量快照 JSON 数组（回滚依据）")
+    diff = Column(Text, comment="本次归纳产出的变更摘要 JSON 数组（建议级）")
+    summary = Column(Text, comment="模型给出的一句话画像总结（insights 拼接）")
+    error = Column(Text, comment="失败原因（LLM 不可用 / 解析失败时为非空）")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PreferenceSuggestion(Base):
+    """L2a 待确认建议箱：模型产出的「主题增/删/改/合并」建议，等人逐条确认。
+
+    任何建议都**不会自动落到 focus_topics**；``accept`` 时才按 ``kind`` 执行。
+    """
+    __tablename__ = "preference_suggestions"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision_id = Column(UUID(as_uuid=True), ForeignKey("focus_topic_revisions.id", ondelete="SET NULL"),
+                         nullable=True, index=True, comment="来源归纳快照")
+    kind = Column(String(20), nullable=False, index=True,
+                  comment="add=新增主题 / adjust=调权重 / merge=合并 / drop=停用 / insight=结论（不落库）")
+    name = Column(String(200), nullable=False, comment="建议主体名（合并建议里是合并后的目标名）")
+    target_id = Column(UUID(as_uuid=True), ForeignKey("focus_topics.id", ondelete="SET NULL"),
+                       nullable=True, comment="指向已有主题（adjust/drop 用）")
+    payload = Column(Text, comment="建议完整载荷 JSON（targets/into/delta/aliases 等）")
+    reason = Column(Text, comment="模型给出的理由（可解释性）")
+    confidence = Column(Float, nullable=False, default=0.0, comment="置信度，仅用于排序，不作为自动生效开关")
+    evidence = Column(Text, comment="支撑证据 JSON（反馈 id / 命中统计）")
+    status = Column(String(20), nullable=False, default="pending", index=True,
+                    comment="pending=待确认 / accepted=已接受 / rejected=已拒绝")
+    resolved_at = Column(DateTime, comment="确认时间")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("user_id", "revision_id", "kind", "name", name="uq_pref_suggestion_user_rev_kind_name"),
+    )

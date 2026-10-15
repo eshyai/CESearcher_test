@@ -315,3 +315,125 @@ export const deleteFocusTopic = async (topicId: string): Promise<{ success: bool
   const res = await request.delete<{ success: boolean }>(`/intelligence/topics/${topicId}`)
   return res.data
 }
+
+// ===========================================================================
+// L2a 归纳引擎：建议箱 + 归纳历史 + 回滚
+// 模型永远不直接改关注主题，只产出「建议 + 理由 + 证据」，由用户逐条确认。
+// ===========================================================================
+
+export type SuggestionKind = 'add' | 'adjust' | 'merge' | 'drop' | 'insight'
+
+export interface PreferenceSuggestion {
+  id: string
+  kind: SuggestionKind
+  name: string
+  target_id?: string | null
+  /** add: topic_type/query_text/weight/alias_count；adjust: delta/from_weight；merge: targets/into/topic_ids */
+  payload: Record<string, any>
+  reason?: string | null
+  /** 0 ~ 1，越高越排前 */
+  confidence: number
+  /** 支撑这条建议的反馈 id 列表 */
+  evidence: string[]
+  status: 'pending' | 'accepted' | 'rejected'
+  revision_id?: string | null
+  resolved_at?: string | null
+  created_at?: string | null
+}
+
+export interface InductionStatus {
+  /** 是否已达到归纳条件（反馈条数达阈值，或距上次归纳超过 N 天） */
+  due: boolean
+  reason: 'batch' | 'schedule' | 'insufficient'
+  /** 距上次归纳后新增的反馈条数 */
+  pending_feedback: number
+  threshold: number
+  max_days: number
+  days_since_last?: number | null
+  last_inducted_at?: string | null
+  /** 待确认建议数（决定按钮徽标） */
+  pending_suggestions: number
+}
+
+export interface FocusTopicRevision {
+  id: string
+  trigger: 'manual' | 'batch' | 'schedule'
+  sample_count: number
+  topic_count: number
+  status: 'applied' | 'rolled_back'
+  current: boolean
+  summary?: string | null
+  error?: string | null
+  diff: Array<{ kind: SuggestionKind; name: string; reason?: string; confidence?: number }>
+  created_at?: string | null
+}
+
+export const getInductionStatus = async (): Promise<InductionStatus> => {
+  const res = await request.get<InductionStatus>('/intelligence/induction/status', { loading: false })
+  return res.data
+}
+
+/** 运行一次归纳（同步调用大模型，可能数秒到数十秒）。返回 ok=false 表示没样本 / 模型不可用 */
+export const runInduction = async (
+  force = true,
+): Promise<{
+  ok: boolean
+  reason?: string
+  message?: string
+  created?: number
+  insights?: string[]
+  revision?: FocusTopicRevision
+  suggestions?: PreferenceSuggestion[]
+}> => {
+  const res = await request.post(
+    '/intelligence/induction',
+    { force },
+    // 归纳要同步调大模型，默认超时不够，单独放宽
+    { loading: false, timeout: 120000 },
+  )
+  return res.data
+}
+
+export const getSuggestions = async (
+  params?: { status?: 'pending' | 'accepted' | 'rejected' | 'all'; kind?: SuggestionKind },
+): Promise<PreferenceSuggestion[]> => {
+  const res = await request.get<PreferenceSuggestion[]>('/intelligence/suggestions', {
+    loading: false,
+    params,
+  })
+  return res.data
+}
+
+export const acceptSuggestion = async (
+  suggestionId: string,
+): Promise<{
+  success: boolean
+  suggestion: PreferenceSuggestion
+  touched_topics: FocusTopic[]
+  detail: string
+}> => {
+  const res = await request.post(`/intelligence/suggestions/${suggestionId}/accept`)
+  return res.data
+}
+
+export const rejectSuggestion = async (
+  suggestionId: string,
+): Promise<{ success: boolean; suggestion: PreferenceSuggestion; detail: string }> => {
+  const res = await request.post(`/intelligence/suggestions/${suggestionId}/reject`)
+  return res.data
+}
+
+export const getRevisions = async (limit = 20): Promise<FocusTopicRevision[]> => {
+  const res = await request.get<FocusTopicRevision[]>('/intelligence/revisions', {
+    loading: false,
+    params: { limit },
+  })
+  return res.data
+}
+
+export const rollbackRevision = async (
+  revisionId: string,
+): Promise<{ success: boolean; revision: FocusTopicRevision; restored: string[]; removed: string[] }> => {
+  const res = await request.post(`/intelligence/revisions/${revisionId}/rollback`)
+  return res.data
+}
