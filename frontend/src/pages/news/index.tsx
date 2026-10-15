@@ -13,6 +13,7 @@ import {
   Input,
   Select,
   Switch,
+  Drawer,
 } from 'antd'
 import {
   FileTextOutlined,
@@ -23,6 +24,8 @@ import {
   DislikeOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  EyeInvisibleOutlined,
+  UndoOutlined,
 } from '@ant-design/icons'
 import { useSnapshot } from 'valtio'
 import { authState } from '@/store/auth'
@@ -86,6 +89,13 @@ export default function NewsPage() {
   const [newsTotal, setNewsTotal] = useState(0)
   const [newsStats, setNewsStats] = useState<NewsStats | null>(null)
 
+  // 个人屏蔽：只影响自己，不删除共享库（详见 api/news.ts 同名区块注释）
+  const [hiddenCount, setHiddenCount] = useState(0)
+  const [hiddenOpen, setHiddenOpen] = useState(false)
+  const [hiddenList, setHiddenList] = useState<NewsItem[]>([])
+  const [hiddenLoading, setHiddenLoading] = useState(false)
+  const [hidingId, setHidingId] = useState<string | null>(null)
+
   // 碎片检索状态（searchQuery 非空 = 处于检索模式）
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -120,6 +130,8 @@ export default function NewsPage() {
         setNewsList(res.data)
         setNewsTotal(res.total)
         setNewsStats(res.stats)
+        // 后端已按当前用户过滤掉屏蔽过的资讯，这里同步徽标数字
+        setHiddenCount(res.hidden_count || 0)
       }
     } catch (error: any) {
       console.error('[NewsPage] fetchNews 错误:', error)
@@ -301,6 +313,17 @@ export default function NewsPage() {
           >
             不相关
           </Button>
+          {/* 个人屏蔽：只让自己看不到，不删除共享库、不影响他人（可随时恢复） */}
+          {item.id && (
+            <Button
+              size="small"
+              icon={<EyeInvisibleOutlined />}
+              loading={hidingId === item.id}
+              onClick={(e) => handleHide(e, item)}
+            >
+              屏蔽
+            </Button>
+          )}
         </span>
       </div>
     </div>
@@ -333,6 +356,61 @@ export default function NewsPage() {
     }
   }
 
+  // 屏蔽一条资讯：本地先剔除 + 同步徽标，不重新拉列表（避免闪骨架屏）
+  const handleHide = async (event: React.MouseEvent, item: NewsItem) => {
+    event.stopPropagation()
+    if (!item.id) return
+    setHidingId(item.id)
+    try {
+      const res = await api.news.hideNews(item.id)
+      const wasInList = newsList.some((n) => n.id === item.id)
+      setNewsList((prev) => prev.filter((n) => n.id !== item.id))
+      setSearchResults((prev) => prev.filter((n) => n.id !== item.id))
+      if (wasInList) setNewsTotal((prev) => Math.max(0, prev - 1))
+      setHiddenCount(res.hidden_count ?? 0)
+      message.success({
+        content: '已屏蔽，这条资讯不再出现在你的列表与检索结果中；可在「已屏蔽」里恢复',
+        duration: 3,
+      })
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '屏蔽失败')
+    } finally {
+      setHidingId(null)
+    }
+  }
+
+  // 拉取「已屏蔽」列表（打开抽屉时调用）
+  const loadHidden = useCallback(async () => {
+    setHiddenLoading(true)
+    try {
+      const res = await api.news.getHiddenNews({ limit: 50 })
+      setHiddenList(res.data)
+      setHiddenCount(res.total)
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '获取已屏蔽列表失败')
+    } finally {
+      setHiddenLoading(false)
+    }
+  }, [])
+
+  // 取消屏蔽：从抽屉移除并刷新列表，让它回到资讯流里
+  const handleUnhide = async (newsId: string) => {
+    try {
+      const res = await api.news.unhideNews(newsId)
+      setHiddenList((prev) => prev.filter((n) => n.id !== newsId))
+      setHiddenCount(res.hidden_count ?? 0)
+      message.success('已恢复显示')
+      fetchNews()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '恢复失败')
+    }
+  }
+
+  const openHidden = () => {
+    setHiddenOpen(true)
+    loadHidden()
+  }
+
   const isSearchMode = searchQuery.trim() !== ''
 
   if (!isLoggedIn) {
@@ -355,6 +433,15 @@ export default function NewsPage() {
           <FileTextOutlined style={{ fontSize: 24, marginRight: 12 }} />
           <h2>行业资讯</h2>
           <Tag color="purple" style={{ marginLeft: 12 }}>{currentIndustry.name}</Tag>
+        </div>
+        <div className={styles['header-right']}>
+          <Button
+            icon={<EyeInvisibleOutlined />}
+            onClick={openHidden}
+            title="查看并恢复你屏蔽过的资讯（只影响你自己）"
+          >
+            已屏蔽{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+          </Button>
         </div>
       </div>
 
@@ -550,6 +637,45 @@ export default function NewsPage() {
           </div>
         )}
       </Card>
+
+      {/* 已屏蔽：只影响自己，不删共享库、不影响其他同事 */}
+      <Drawer
+        title="已屏蔽的资讯"
+        open={hiddenOpen}
+        onClose={() => setHiddenOpen(false)}
+        width={560}
+      >
+        <div className={styles['hidden-hint']}>
+          屏蔽只影响你自己：这些资讯不再出现在你的资讯列表与检索结果中，
+          共享库与其他同事不受影响，随时可以恢复。
+        </div>
+        {hiddenLoading ? (
+          <Skeleton active paragraph={{ rows: 4 }} />
+        ) : hiddenList.length === 0 ? (
+          <Empty description="还没有屏蔽任何资讯" />
+        ) : (
+          <div className={styles['hidden-list']}>
+            {hiddenList.map((item) => (
+              <div key={item.id} className={styles['hidden-item']}>
+                <div className={styles['hidden-item-main']}>
+                  <div className={styles['hidden-item-title']}>{item.title}</div>
+                  <div className={styles['hidden-item-meta']}>
+                    <span>{item.source || '未知来源'}</span>
+                    <span>{formatTime(item.publish_time || item.collected_at)}</span>
+                  </div>
+                </div>
+                <Button
+                  size="small"
+                  icon={<UndoOutlined />}
+                  onClick={() => handleUnhide(item.id)}
+                >
+                  恢复显示
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Drawer>
     </div>
   )
 }

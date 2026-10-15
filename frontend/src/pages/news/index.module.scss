@@ -285,3 +285,57 @@
     }
   }
 }
+
+// ===== 已屏蔽抽屉 =====
+// 注意：Drawer 内容被 portal 到 body，不在 .news-page 内，
+// 因此这些类必须定义在模块顶层（与 .feedback-actions 同理）。
+.hidden-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8c8c8c;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.hidden-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hidden-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+
+  .hidden-item-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .hidden-item-title {
+    font-size: 14px;
+    color: #262626;
+    line-height: 1.5;
+    margin-bottom: 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .hidden-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 12px;
+    color: #8c8c8c;
+  }
+}

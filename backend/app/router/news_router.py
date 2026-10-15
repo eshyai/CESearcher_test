@@ -8,9 +8,12 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from core.database import get_db
+from service import news_hidden_service
 from service.news_collection_service import get_news_collection_service
+from service.news_hidden_service import coerce_uuid
 from service.scheduler_service import get_scheduler_service
 from config.industry_config import get_all_industries, get_industry_config
+from models.news import IndustryNews
 from models.user import User
 from router.auth_router import get_current_user, get_current_user_required
 
@@ -25,6 +28,8 @@ class NewsListResponse(BaseModel):
     data: List[dict]
     total: int
     stats: Optional[dict] = None
+    # 当前用户已屏蔽（个人过滤，非全局删除）的资讯条数，供前端展示「已屏蔽(n)」入口
+    hidden_count: int = 0
 
 
 class CollectionResponse(BaseModel):
@@ -67,7 +72,8 @@ async def get_news_list(
         success=True,
         data=items,
         total=filtered_total,
-        stats=stats
+        stats=stats,
+        hidden_count=news_hidden_service.hidden_count(db, current_user.id) if current_user else 0
     )
 
 
@@ -308,6 +314,7 @@ def search_news(
         limit=payload.limit,
         include_online=payload.include_online,
         exclude_foreign=payload.exclude_foreign,
+        user_id=current_user.id if current_user else None,
     )
     logger.info(
         f"[news_router] search_news 返回: mode={result['mode']}, total={result['total']}, "
@@ -318,3 +325,105 @@ def search_news(
         f"vector_indexed={result['vector_indexed']}"
     )
     return NewsSearchResponse(success=True, **result)
+
+
+# ============================================================================
+# 个人屏蔽（不是删除）
+# ----------------------------------------------------------------------------
+# `industry_news` 是**按行业共享的语料**（没有 user_id），所以「删除」是全局动作：
+# 会同时让所有用户看不到，并且因为 `news_feedback.news_id` 的 ON DELETE CASCADE
+# 连带删掉所有人对该条资讯的反馈——而反馈正是 L1 / L1.5 / L2a 的输入。
+#
+# 因此这里只提供**个人过滤**：屏蔽后仅当前用户在列表与检索结果里看不到，
+# 共享库、其他用户视图、Milvus 向量索引都不动，随时可恢复。
+# 与反馈互不影响：屏蔽**不写反馈**，避免污染偏好学习样本。
+# ============================================================================
+
+
+class HideRequest(BaseModel):
+    """屏蔽请求体（可选，reason 仅留痕）"""
+    reason: Optional[str] = None
+
+
+class HideActionResponse(BaseModel):
+    """屏蔽 / 取消屏蔽响应"""
+    success: bool
+    message: str
+    status: str = ""          # created / exists / removed / absent
+    hidden_count: int = 0
+
+
+class HiddenNewsResponse(BaseModel):
+    """已屏蔽资讯列表响应"""
+    success: bool
+    data: List[dict]
+    total: int
+
+
+@router.post("/{news_id}/hide", response_model=HideActionResponse)
+def hide_news(
+    news_id: str,
+    payload: Optional[HideRequest] = None,
+    current_user: User = Depends(get_current_user_required),
+    db: Session = Depends(get_db),
+):
+    """屏蔽一条资讯：只在**你自己**的资讯列表与检索结果里不再出现，随时可恢复。
+
+    幂等：重复屏蔽不报错。不删除任何数据，也不写反馈。
+    """
+    nid = coerce_uuid(news_id)
+    if not nid:
+        raise HTTPException(status_code=400, detail="news_id 非法")
+    if not db.query(IndustryNews.id).filter(IndustryNews.id == nid).first():
+        raise HTTPException(status_code=404, detail="资讯不存在")
+
+    try:
+        result = news_hidden_service.hide_news(
+            db, current_user.id, nid, reason=payload.reason if payload else None
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    created = result["status"] == "created"
+    logger.info(f"[news_router] hide_news: user={current_user.id}, news={nid}, status={result['status']}")
+    return HideActionResponse(
+        success=True,
+        message="已屏蔽，这条资讯不再出现在你的列表与检索结果中" if created else "这条资讯此前已被你屏蔽",
+        status=result["status"],
+        hidden_count=news_hidden_service.hidden_count(db, current_user.id),
+    )
+
+
+@router.delete("/{news_id}/hide", response_model=HideActionResponse)
+def unhide_news(
+    news_id: str,
+    current_user: User = Depends(get_current_user_required),
+    db: Session = Depends(get_db),
+):
+    """取消屏蔽，恢复显示。幂等：未屏蔽过也返回成功。"""
+    nid = coerce_uuid(news_id)
+    if not nid:
+        raise HTTPException(status_code=400, detail="news_id 非法")
+
+    removed = news_hidden_service.unhide_news(db, current_user.id, nid)
+    logger.info(f"[news_router] unhide_news: user={current_user.id}, news={nid}, removed={removed}")
+    return HideActionResponse(
+        success=True,
+        message="已恢复显示" if removed else "这条资讯本来就不在你的屏蔽列表里",
+        status="removed" if removed else "absent",
+        hidden_count=news_hidden_service.hidden_count(db, current_user.id),
+    )
+
+
+@router.get("/hidden", response_model=HiddenNewsResponse)
+def list_hidden_news(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user_required),
+    db: Session = Depends(get_db),
+):
+    """当前用户已屏蔽的资讯列表（按屏蔽时间倒序），用于查看与恢复。"""
+    items, total = news_hidden_service.list_hidden_news(
+        db, current_user.id, limit=limit, offset=offset
+    )
+    return HiddenNewsResponse(success=True, data=items, total=total)

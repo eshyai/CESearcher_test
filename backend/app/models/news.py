@@ -234,3 +234,34 @@ class PreferenceSuggestion(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "revision_id", "kind", "name", name="uq_pref_suggestion_user_rev_kind_name"),
     )
+
+
+class NewsHidden(Base):
+    """用户对资讯的**个人屏蔽**：记录「这个用户不想再看到这条资讯」。
+
+    设计边界（重要，别和 NewsFeedback 混）：
+    - ``industry_news`` 是**按行业共享的语料**（无 user_id），任何「删除」都是全局动作。
+      因此这里只做**个人过滤**：命中本表的资讯只在**该用户的检出链路**里被排除，
+      共享库、其他用户的列表、向量索引**都不受影响**，且随时可逆。
+    - 与 ``NewsFeedback`` 互不影响：反馈是**信号**（喂给 L1 / L1.5 / L2a 学习），
+      屏蔽是**过滤**（只在查询层排除）。屏蔽**不写反馈**，避免污染偏好学习样本。
+    - FK 用 CASCADE 是安全的：只有 ``industry_news`` 行真的被删除时，
+      屏蔽记录才跟着走；本功能本身从不删 ``industry_news``。
+    """
+    __tablename__ = "news_hidden"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    news_id = Column(UUID(as_uuid=True), ForeignKey("industry_news.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    reason = Column(String(200), comment="可选：屏蔽原因（留痕，不参与计算）")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("user_id", "news_id", name="uq_news_hidden_user_news"),)
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "news_id": str(self.news_id),
+            "reason": self.reason,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

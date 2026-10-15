@@ -25,6 +25,7 @@ from config.industry_config import DEFAULT_INDUSTRY_ID
 from models.news import IndustryNews
 from service.dedup_service import normalize_title, titles_same_article
 from service.industry_relevance_service import get_industry_relevance_service
+from service.news_hidden_service import hidden_news_ids
 from service.news_index_service import get_news_index_service
 from service.news_live_search_service import get_news_live_search_service
 
@@ -148,6 +149,7 @@ class NewsSearchService:
         limit: int = 20,
         include_online: bool = True,
         exclude_foreign: bool = False,
+        user_id: Any = None,
     ) -> Dict[str, Any]:
         query = (query or "").strip()
         industry_id = industry_id or DEFAULT_INDUSTRY_ID
@@ -194,6 +196,17 @@ class NewsSearchService:
                 key=lambda r: float(candidates.get(str(r.id), {}).get("vector", 0.0)),
                 reverse=True,
             )
+
+        # ---- 2b) 个人屏蔽过滤（库内）----
+        # 只影响当前用户的视图：屏蔽过的资讯不进入候选，既不占 rerank 名额、
+        # 也不会被当成「库内命中」而挤掉别的结果。共享库与索引完全不动。
+        hidden_ids = hidden_news_ids(self.db, user_id)
+        if hidden_ids:
+            before_hidden = len(rows)
+            rows = [r for r in rows if str(r.id) not in hidden_ids]
+            hidden_filtered = before_hidden - len(rows)
+            if hidden_filtered:
+                logger.info(f"[news_search] 个人屏蔽过滤掉库内候选 {hidden_filtered} 条")
 
         # ---- 3) 全网实时检索（补库里没有的）----
         online_items: List[Dict[str, Any]] = []
@@ -321,6 +334,13 @@ class NewsSearchService:
                     nid = mapping.get(item.get("source_url") or "")
                     if nid:
                         item["id"] = nid
+
+        # ---- 7b) 个人屏蔽兜底过滤 ----
+        # 同一条资讯常同时存在于库内与全网（不同站点 / 不同 URL）。库内那条在第 2b 步
+        # 已被剔除，但全网那条是独立候选、沉淀后才拿到 id，所以这里按最终 id 再兜一次，
+        # 保证屏蔽对「库内 + 全网」一致生效。
+        if hidden_ids:
+            data = [it for it in data if str(it.get("id") or "") not in hidden_ids]
 
         return {
             "query": query,

@@ -67,6 +67,8 @@ export interface NewsListResponse {
   data: NewsItem[]
   total: number
   stats: NewsStats
+  /** 当前用户已屏蔽的条数（个人过滤，非全局删除），用于「已屏蔽」入口徽标 */
+  hidden_count?: number
 }
 
 export interface BiddingListResponse {
@@ -137,6 +139,51 @@ export const searchNews = async (params: {
     // 全网实时检索 + 重排，耗时比普通接口长，放宽超时
     timeout: 60000,
   })
+  return res.data
+}
+
+// ===========================================================================
+// 个人屏蔽（只影响自己，不是删除）
+// 资讯是**按行业共享的语料**，删一条所有人都看不到，还会连带删掉所有人的反馈
+// （反馈是偏好学习的输入）。所以这里只做个人过滤：自己看不到，随时可恢复。
+// ===========================================================================
+
+export interface HideActionResponse {
+  success: boolean
+  message: string
+  /** created / exists / removed / absent */
+  status: string
+  hidden_count: number
+}
+
+export interface HiddenNewsListResponse {
+  success: boolean
+  data: NewsItem[]
+  total: number
+}
+
+// 屏蔽一条资讯（幂等；不写反馈，不影响偏好学习样本）
+export const hideNews = async (newsId: string, reason?: string): Promise<HideActionResponse> => {
+  const res = await request.post<HideActionResponse>(
+    `/news/${newsId}/hide`,
+    reason ? { reason } : {},
+    { loading: false },
+  )
+  return res.data
+}
+
+// 取消屏蔽，恢复显示（幂等）
+export const unhideNews = async (newsId: string): Promise<HideActionResponse> => {
+  const res = await request.delete<HideActionResponse>(`/news/${newsId}/hide`, { loading: false })
+  return res.data
+}
+
+// 已屏蔽列表（按屏蔽时间倒序，用于查看与恢复）
+export const getHiddenNews = async (params?: {
+  limit?: number
+  offset?: number
+}): Promise<HiddenNewsListResponse> => {
+  const res = await request.get<HiddenNewsListResponse>('/news/hidden', { params, loading: false })
   return res.data
 }
 

@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 import httpx
 from sqlalchemy.orm import Session
 
-from models.news import IndustryNews, BiddingInfo, NewsCollectionTask, FocusTopic
+from models.news import IndustryNews, BiddingInfo, NewsCollectionTask, FocusTopic, NewsHidden
 from service.bidding_service import get_bidding_service
 from service.dedup_service import get_dedup_service
 from service.source_quality_service import get_source_quality_service
@@ -627,6 +627,17 @@ class NewsCollectionService:
         # 按影响方向筛选：positive/negative/neutral
         if impact_direction:
             query = query.filter(IndustryNews.impact_direction == impact_direction)
+
+        # 个人屏蔽：只排除「当前用户」屏蔽过的资讯。
+        # industry_news 是共享语料，所以这里刻意用「当前用户 + 子查询」而不是删除数据，
+        # 保证共享库、其他用户视图、向量索引都不受影响。详见 service/news_hidden_service.py。
+        if user_id:
+            hidden_sub = (
+                self.db.query(NewsHidden.news_id)
+                .filter(NewsHidden.user_id == user_id)
+                .scalar_subquery()
+            )
+            query = query.filter(~IndustryNews.id.in_(hidden_sub))
 
         # 先获取筛选后的总数
         filtered_total = query.count()
