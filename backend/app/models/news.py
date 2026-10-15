@@ -160,6 +160,12 @@ class FocusTopic(Base):
                             ForeignKey("industry_news.id", ondelete="SET NULL"),
                             nullable=True, comment="自动主题的触发资讯（可解释性）")
     auto_hits = Column(Integer, nullable=False, default=0, comment="被反馈命中的次数（自动主题）")
+    # ===== LMA 弱负信号：资讯「屏蔽」的降权（docker/init-db/09-news-hidden-weak-signal.sql）=====
+    # 刻意与 weight / 正负计数分家：屏蔽只做**弱降权**（≤0，仅作用于本用户的个性化排序），
+    # 不写 news_feedback、不改 positive_count / negative_count，取消屏蔽即可精确回滚。
+    weak_penalty = Column(Float, nullable=False, default=0.0,
+                          comment="屏蔽累积的弱降权（≤0，只影响个性化排序，不影响 weight/计数）")
+    weak_hits = Column(Integer, nullable=False, default=0, comment="被屏蔽资讯命中的次数（弱负信号）")
     # ===== L2a：由「归纳建议」落地的主题（docker/init-db/07-lma-induction.sql）=====
     suggestion_id = Column(UUID(as_uuid=True), nullable=True, index=True,
                            comment="产生该主题的偏好建议 id（归纳建议 add 落地时写入，用于解释与回滚）")
@@ -247,6 +253,13 @@ class NewsHidden(Base):
       屏蔽是**过滤**（只在查询层排除）。屏蔽**不写反馈**，避免污染偏好学习样本。
     - FK 用 CASCADE 是安全的：只有 ``industry_news`` 行真的被删除时，
       屏蔽记录才跟着走；本功能本身从不删 ``industry_news``。
+
+    弱负信号（LMA）：
+    - 屏蔽除了「过滤」，还对**本用户**命中的关注主题施加一点**弱降权**
+      （``focus_topics.weak_penalty``，写在这里而不是 news_feedback）。
+      它是「弱」的——只影响个性化排序，不改 ``weight``、不动正/负计数、不进 L2a 的反馈样本。
+    - ``weak_signals`` 记录本次屏蔽**对哪些主题、各施加了多少**降权，
+      取消屏蔽时按它**精确反向**回滚（而不是按当前命中的主题重算——主题集合可能已经变了）。
     """
     __tablename__ = "news_hidden"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -255,6 +268,7 @@ class NewsHidden(Base):
     news_id = Column(UUID(as_uuid=True), ForeignKey("industry_news.id", ondelete="CASCADE"),
                      nullable=False, index=True)
     reason = Column(String(200), comment="可选：屏蔽原因（留痕，不参与计算）")
+    weak_signals = Column(Text, comment="本次屏蔽施加的弱降权 JSON（取消屏蔽时据此精确回滚）")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "news_id", name="uq_news_hidden_user_news"),)
 

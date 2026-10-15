@@ -49,6 +49,16 @@ def topic_matches(topic: FocusTopic, news: IndustryNews) -> bool:
     return query_matches(compile_topic(topic), TextIndex(news_text(news)))
 
 
+def effective_weight(topic: FocusTopic) -> float:
+    """个性化排序使用的**有效权重** = 学习权重 + 屏蔽弱降权（≤0）。
+
+    弱降权来自资讯屏蔽（``focus_topics.weak_penalty``，见 ``service/news_hidden_service.py``）：
+    它只影响本用户的排序，**不改** ``weight``，也不动正/负反馈计数——
+    取消屏蔽时按记录量精确加回。
+    """
+    return float(topic.weight or 0.0) + float(getattr(topic, "weak_penalty", 0.0) or 0.0)
+
+
 class FeedbackLearningService:
     def __init__(self, db: Session):
         self.db = db
@@ -174,7 +184,7 @@ class FeedbackLearningService:
         for news in items:
             index = TextIndex(news_text(news))
             matched = [topic for topic, query in compiled if query_matches(query, index)]
-            topic_score = sum(float(topic.weight or 0) for topic in matched)
+            topic_score = sum(effective_weight(topic) for topic in matched)
             published = news.publish_time or news.collected_at
             age_days = max(0.0, ((now if published and published.tzinfo else now_naive)
                                  - (published or now_naive)).total_seconds() / 86400)

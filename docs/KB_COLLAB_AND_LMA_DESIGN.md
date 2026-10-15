@@ -293,6 +293,7 @@ DeepResearch 研究前召回该用户的偏好画像
 2. ~~**K2 检索权限过滤**~~ —— ✅ 已完成（v0.9-kb-isolation）。原排第 3，因属 P0 越权而提前；
 3. ~~**L1.5 反馈冷启动补漏**~~ —— ✅ 已完成（v0.10-lma-l15）；
 4. ~~**L2a 归纳引擎 + L2b 建议箱**~~ —— ✅ 已完成（v0.11-lma-l2a，同批交付），见附录 F；
+   ~~**屏蔽的弱负信号**~~ —— ✅ 已完成（v0.12-weak-signal），见附录 G（补上了 v0.11 之前刻意留白的缺口）；
 5. **L3 画像召回** —— 建议下一步做。它把 L2 的产物真正用起来（记忆库目前**只写不读**），
    且**自包含**：不依赖公司 AI 接口、不依赖 DocMind；
 6. **K3 标注** —— 仍排最后，是"锦上添花"而非"雪中送炭"，且受 DocMind 限制只能在已有文档上标注。
@@ -741,3 +742,67 @@ if not evidence and not (int(topic.negative_count or 0) > 0):
 - **检索词未接入归纳输入**：检索词不落库，要接需先加 `search_history`。
 - **时间衰减**：仍无；「老主题退场」靠 `drop` 建议 + 人工确认。
 - **词表不回写**：归纳结果不会反哺 `chem_lexicon.py`。
+
+---
+
+# 附录 G · 屏蔽的「弱负信号」（v0.12-weak-signal，已实现）
+
+## G.1 问题
+
+「资讯个人屏蔽」（v0.11 之前一批）当时**刻意留白**：屏蔽只做**过滤**，不给偏好学习任何输入。
+理由是「顺手屏蔽」与「明确点不感兴趣」强度不同，混进 `news_feedback` 会稀释强负样本。
+
+但这留下一个缺口：**用户已经把「我不想再看到这类」表达得很直接了，系统却学不到**。
+本附录把屏蔽接进 LMA，作为一条**弱负信号**。
+
+## G.2 核心设计：三通道分家
+
+| 通道 | 载体 | 强度 | 影响 |
+|---|---|---|---|
+| 强正向 | `news_feedback` + `weight` ↑ + `positive_count` ↑ | 强 | 排序、L1.5 派生、L2a 归纳 |
+| 强负向 | `news_feedback` + `weight` ↓ + `negative_count` ↑ | 强 | 同上（一次 ≈ -0.35） |
+| **弱负向（本附录）** | `focus_topics.weak_penalty`（≤0） | **弱** | **仅个性化排序**；L2a 可作 drop 的辅助证据 |
+
+一次屏蔽 = 对被命中的每个生效主题 `weak_penalty += WEAK_HIDE_DELTA(-0.05)`，
+累计下限 `WEAK_PENALTY_FLOOR(-0.5)`（最多降半个权重，永远只是「微调」）。
+
+排序用**有效权重** `effective_weight(topic) = weight + weak_penalty`（`feedback_learning_service`）。
+
+## G.3 三条硬边界（写成代码注释 + 测试断言，防止被后人"优化"掉）
+
+1. **不改 `weight`，不动 `positive_count / negative_count`** —— 弱信号与强负样本不是一回事；
+2. **不写 `news_feedback`** —— 因此不会混进 L1.5 派生与 L2a 的反馈样本；
+3. **可精确回滚** —— 屏蔽时把 `[{topic_id, delta}]` 写进 `news_hidden.weak_signals`，
+   取消屏蔽按记录量**反向加回**。**不能**按"当前命中的主题重算"：期间用户可能改名 / 停用 / 新建主题，重算会对不上账。
+
+## G.4 L2a 消费方式（保守优先）
+
+- 归纳 prompt 的主题块新增「弱屏蔽N次」列，并在规则 5 明确其含义与用法；
+- `drop` 建议的第三道闸放宽为：`evidence` **或** `negative_count>0` **或** `weak_hits >= LMA_WEAK_DROP_HITS(3)`；
+  **前两道闸不变**——`stats["positive"]>0` 跳、`topic.positive_count>0` 跳。
+  即：**有正向历史的主题，弱信号再多也不会被建议淘汰**；弱信号够多才允许"产出建议"，仍要人工确认。
+- **弱字段刻意不进归纳快照 / 不参与回滚**（`_topic_snapshot` 注释）：否则回滚会把归纳之后用户新产生的屏蔽一并抹掉，属越权。
+
+## G.5 文件与迁移
+
+- 模型：`models/news.py`（`FocusTopic.weak_penalty/weak_hits`、`NewsHidden.weak_signals`）
+- 服务：`service/news_hidden_service.py`（`apply_weak_penalty` / `_reverse_weak_penalty`）、
+  `service/feedback_learning_service.py`（`effective_weight`）
+- 迁移：`docker/init-db/09-news-hidden-weak-signal.sql`（`create_all` 不会给已有表补列，**必须执行**）
+- 前端：`/news` 屏蔽后 toast 提示降权了哪些主题；`/topics` 权重列按"有效权重"画进度条并标注原权重，
+  反馈列新增「弱屏蔽 N」标签。
+
+## G.6 实测
+
+| 项 | 结果 |
+|---|---|
+| `backend/test/test_hide_weak_signal.py` | **40/40 通过**（施加/幂等/排序/精确回滚/跨用户隔离/下限封顶/L2a 三道闸） |
+| 既有回归 | `test_news_hidden` 40/40、`test_l2a_induction` 70/70、`test_l15_feedback_topics` 50/50、`test_interest_scoring` 3/3、`test_title_dedup` 0 失败 |
+| 前端编译 | `/pages/news/index.tsx`、`/api/news.ts`、`/pages/news/index.module.scss`、`/pages/topics/index.tsx`、`/pages/topics/index.module.scss` 经 vite 按需编译均 **200** |
+
+## G.7 边界（仍未做）
+
+- **屏蔽不触发自动退役**：弱信号只降权，不把主题打到 `AUTO_TOPIC_RETIRE_WEIGHT` 以下（退役仍只归强负反馈）。
+- **不做时间衰减**：多次屏蔽的降权会一直挂着，直到用户取消屏蔽；
+  将来若要衰减，应在 `weak_penalty` 上加 time-decay，而不是改 `weight`。
+- **仍不落检索词**：因此"用户搜了什么然后屏蔽"这条线没有记录，与附录 F.8 同因。

@@ -375,26 +375,43 @@ export default function TopicsPage() {
       dataIndex: 'weight',
       key: 'weight',
       width: 200,
-      render: (weight: number) => (
-        <div className={styles['weight-cell']}>
-          {/* 权重范围 [-2, 2]，归一化到 [0, 100%] 展示 */}
-          <Progress
-            percent={Number((((weight + 2) / 4) * 100).toFixed(0))}
-            size="small"
-            strokeColor={weight >= 1 ? '#cf1322' : weight >= 0 ? '#1890ff' : '#8c8c8c'}
-            format={() => weight.toFixed(2)}
-          />
-        </div>
-      ),
+      render: (weight: number, record) => {
+        const penalty = Number(record.weak_penalty ?? 0)
+        const effective = weight + penalty
+        return (
+          <div className={styles['weight-cell']}>
+            {/* 权重范围 [-2, 2]，归一化到 [0, 100%] 展示；进度条按“有效权重”画
+                （屏蔽累积的弱降权只影响个性化排序，不改 weight 本身） */}
+            <Progress
+              percent={Number((((effective + 2) / 4) * 100).toFixed(0))}
+              size="small"
+              strokeColor={effective >= 1 ? '#cf1322' : effective >= 0 ? '#1890ff' : '#8c8c8c'}
+              format={() => effective.toFixed(2)}
+            />
+            {penalty !== 0 && (
+              <Tooltip title={`屏蔽带来的弱降权 ${penalty.toFixed(2)}（仅影响你自己的排序，不改权重与计数；取消屏蔽即撤销）`}>
+                <span className={styles['weak-hint']}>
+                  原 {weight.toFixed(2)}
+                </span>
+              </Tooltip>
+            )}
+          </div>
+        )
+      },
     },
     {
       title: '反馈',
       key: 'feedback',
       width: 140,
       render: (_, record) => (
-        <Space size={4}>
+        <Space size={4} wrap>
           <Tag color="red">感兴趣 {record.positive_count}</Tag>
           <Tag color="default">不感兴趣 {record.negative_count}</Tag>
+          {(record.weak_hits ?? 0) > 0 && (
+            <Tooltip title="你屏蔽的资讯命中了该主题的次数。属弱负信号：只微调排序，不改权重与计数。">
+              <Tag color="default">弱屏蔽 {record.weak_hits}</Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },

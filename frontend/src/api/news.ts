@@ -33,6 +33,11 @@ export interface NewsItem {
   // ===== 碎片检索结果附加字段 =====
   score?: number
   match_reason?: string
+  // ===== 已屏蔽列表附加字段（/news/hidden）=====
+  hidden_at?: string | null
+  hidden_reason?: string | null
+  /** 屏蔽这条时施加了弱降权的关注主题 */
+  weak_topics?: { topic_id: string; name: string; delta: number }[]
 }
 
 export interface BiddingItem {
@@ -154,6 +159,8 @@ export interface HideActionResponse {
   /** created / exists / removed / absent */
   status: string
   hidden_count: number
+  /** 本次屏蔽真正施加了弱降权的关注主题（LMA 弱负信号；重复屏蔽为空） */
+  weak_topics?: { topic_id: string; name: string; delta: number; weak_penalty?: number }[]
 }
 
 export interface HiddenNewsListResponse {
@@ -321,6 +328,10 @@ export interface FocusTopic {
   origin_news_id?: string | null
   /** 自动主题被反馈命中的次数 */
   auto_hits?: number
+  /** 屏蔽累积的弱降权（≤0，只影响个性化排序；不改 weight / 正负计数） */
+  weak_penalty?: number
+  /** 被屏蔽资讯命中的次数（弱负信号） */
+  weak_hits?: number
 }
 
 export const getFocusTopics = async (params?: {

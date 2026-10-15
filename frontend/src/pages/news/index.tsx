@@ -368,8 +368,12 @@ export default function NewsPage() {
       setSearchResults((prev) => prev.filter((n) => n.id !== item.id))
       if (wasInList) setNewsTotal((prev) => Math.max(0, prev - 1))
       setHiddenCount(res.hidden_count ?? 0)
+      // 弱负信号：屏蔽会顺带小幅降低命中主题的推荐度（不改权重、可随恢复撤销）
+      const weakNames = (res.weak_topics || []).map((w) => w.name).filter(Boolean)
       message.success({
-        content: '已屏蔽，这条资讯不再出现在你的列表与检索结果中；可在「已屏蔽」里恢复',
+        content: weakNames.length
+          ? `已屏蔽，并降低了「${weakNames.join('、')}」的推荐度；可在「已屏蔽」里恢复`
+          : '已屏蔽，这条资讯不再出现在你的列表与检索结果中；可在「已屏蔽」里恢复',
         duration: 3,
       })
     } catch (error: any) {
@@ -663,6 +667,13 @@ export default function NewsPage() {
                     <span>{item.source || '未知来源'}</span>
                     <span>{formatTime(item.publish_time || item.collected_at)}</span>
                   </div>
+                  {(item.weak_topics?.length ?? 0) > 0 && (
+                    <div className={styles['hidden-item-weak']}>
+                      屏蔽时降低了「
+                      {item.weak_topics!.map((w) => w.name).join('、')}
+                      」的推荐度（恢复即撤销）
+                    </div>
+                  )}
                 </div>
                 <Button
                   size="small"

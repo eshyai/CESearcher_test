@@ -52,7 +52,10 @@ def topic_dict(topic: FocusTopic) -> dict:
             # L1.5
             "source": topic.source or "manual",
             "origin_news_id": str(topic.origin_news_id) if topic.origin_news_id else None,
-            "auto_hits": topic.auto_hits or 0}
+            "auto_hits": topic.auto_hits or 0,
+            # LMA 弱负信号：屏蔽累积的降权与命中次数（不改 weight / 正负计数）
+            "weak_penalty": float(topic.weak_penalty or 0.0),
+            "weak_hits": int(topic.weak_hits or 0)}
 
 
 @router.get("/topics")

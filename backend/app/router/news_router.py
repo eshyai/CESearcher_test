@@ -351,6 +351,7 @@ class HideActionResponse(BaseModel):
     message: str
     status: str = ""          # created / exists / removed / absent
     hidden_count: int = 0
+    weak_topics: List[dict] = []   # 本次真正生效的弱降权主题（LMA 弱负信号）
 
 
 class HiddenNewsResponse(BaseModel):
@@ -370,6 +371,7 @@ def hide_news(
     """屏蔽一条资讯：只在**你自己**的资讯列表与检索结果里不再出现，随时可恢复。
 
     幂等：重复屏蔽不报错。不删除任何数据，也不写反馈。
+    同时对命中的关注主题施加一点**弱降权**（弱负信号），随取消屏蔽精确回滚。
     """
     nid = coerce_uuid(news_id)
     if not nid:
@@ -385,12 +387,20 @@ def hide_news(
         raise HTTPException(status_code=400, detail=str(e))
 
     created = result["status"] == "created"
-    logger.info(f"[news_router] hide_news: user={current_user.id}, news={nid}, status={result['status']}")
+    weak = result.get("weak_topics") or []
+    logger.info(f"[news_router] hide_news: user={current_user.id}, news={nid}, "
+                f"status={result['status']}, weak_topics={len(weak)}")
+    if created and weak:
+        message_text = "已屏蔽；同时降低了对 " + "、".join(f"「{w['name']}」" for w in weak) + " 的推荐"
+    else:
+        message_text = ("已屏蔽，这条资讯不再出现在你的列表与检索结果中"
+                        if created else "这条资讯此前已被你屏蔽")
     return HideActionResponse(
         success=True,
-        message="已屏蔽，这条资讯不再出现在你的列表与检索结果中" if created else "这条资讯此前已被你屏蔽",
+        message=message_text,
         status=result["status"],
         hidden_count=news_hidden_service.hidden_count(db, current_user.id),
+        weak_topics=weak,
     )
 
 

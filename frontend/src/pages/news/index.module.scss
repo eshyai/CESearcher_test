@@ -338,4 +338,11 @@
     font-size: 12px;
     color: #8c8c8c;
   }
+
+  // 弱负信号：屏蔽时顺手降了哪些主题的推荐度（恢复即撤销）
+  .hidden-item-weak {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #8c8c8c;
+  }
 }

@@ -80,6 +80,8 @@ INDUCTION_MAX_DAYS = _env_int("LMA_INDUCTION_MAX_DAYS", 7, 1)
 INDUCTION_SAMPLE_LIMIT = _env_int("LMA_INDUCTION_SAMPLE_LIMIT", 60, 5)
 # 打包给模型的当前主题条数
 INDUCTION_TOPIC_LIMIT = _env_int("LMA_INDUCTION_TOPIC_LIMIT", 60, 5)
+# 弱负信号（资讯屏蔽）达到多少次，才算「用户反复不想看」的 drop 证据
+WEAK_DROP_HITS = _env_int("LMA_WEAK_DROP_HITS", 3, 1)
 # 归纳用模型：需要一定推理力，用 plus 档
 LMA_INDUCTION_MODEL = os.getenv("LMA_INDUCTION_MODEL", "qwen-plus")
 # 样本里正文摘要的截断长度
@@ -97,7 +99,7 @@ INDUCTION_PROMPT = """你是化工行业资讯助手的用户偏好分析师。
 下面是一位用户的**反馈样本**和**当前的关注主题**，请归纳出这位用户的真实关注点，
 提出对关注主题的调整建议。**只依据给出的数据推断，不要臆测**。
 
-=== 当前关注主题（名称｜类型｜权重｜正/负反馈次数｜来源｜是否生效）===
+=== 当前关注主题（名称｜类型｜权重｜正/负反馈次数｜来源｜是否生效｜弱屏蔽次数）===
 {topics_block}
 
 === 反馈样本（编号｜判断｜事件类型｜标题 / 实体 摘要）===
@@ -124,6 +126,8 @@ INDUCTION_PROMPT = """你是化工行业资讯助手的用户偏好分析师。
    `into` 是合并后的规范名；不要合并上下游关系或同类不同物（如 PA6 与 PA66 不能合并）。
 5. `drop_topics` 只用于**长期没有任何正向证据**的主题（样本中从未出现、或只出现负面）。
    不要因为样本里没出现就判它该删——样本有限。
+   「弱屏蔽次数」= 用户主动屏蔽了命中该主题的资讯的次数（弱负信号：不改权重、不计入正/负反馈）。
+   只有在该主题**没有任何正向证据**、且弱屏蔽次数 ≥ {weak_drop_hits} 时，才可以把它列入 `drop_topics`。
 6. `insights` 最多 3 条，每条不超过 40 字，是给用户看的画像结论。
 7. 没有把握的类别就给空数组，不要为了凑数硬编。"""
 
@@ -213,7 +217,12 @@ def _topic_key(name: str) -> str:
 
 
 def _topic_snapshot(topic: FocusTopic) -> dict:
-    """把主题序列化成可回滚的快照条目。"""
+    """把主题序列化成可回滚的快照条目。
+
+    注意：**故意不包含** ``weak_penalty`` / ``weak_hits``。它们是「资讯屏蔽」造成的，
+    与归纳无关；若纳入快照，回滚会把**归纳之后**用户新产生的屏蔽一并抹掉，属于越权。
+    回滚只还原归纳真正会改的字段。
+    """
     return {
         "id": str(topic.id),
         "topic_type": topic.topic_type,
@@ -238,6 +247,8 @@ def topic_dict(topic: FocusTopic) -> dict:
         "is_active": topic.is_active, "source": topic.source or "manual",
         "origin_news_id": str(topic.origin_news_id) if topic.origin_news_id else None,
         "auto_hits": topic.auto_hits or 0,
+        "weak_penalty": float(topic.weak_penalty or 0.0),
+        "weak_hits": int(topic.weak_hits or 0),
         "suggestion_id": str(topic.suggestion_id) if topic.suggestion_id else None,
         "created_at": topic.created_at.isoformat() if topic.created_at else None,
         "updated_at": topic.updated_at.isoformat() if topic.updated_at else None,
@@ -398,7 +409,8 @@ class LmaInductionService:
             topics_block = "\n".join(
                 f"{i + 1}. {t.name}｜{t.topic_type}｜权重{t.weight:.2f}｜"
                 f"正{t.positive_count or 0}/负{t.negative_count or 0}｜"
-                f"{t.source or 'manual'}｜{'生效' if t.is_active else '已停用'}"
+                f"{t.source or 'manual'}｜{'生效' if t.is_active else '已停用'}｜"
+                f"弱屏蔽{int(t.weak_hits or 0)}"
                 for i, t in enumerate(topics)
             )
         else:
@@ -448,7 +460,8 @@ class LmaInductionService:
 
         topics_block, samples_block = self._prompt_blocks(topics, samples)
         prompt = INDUCTION_PROMPT.format(topics_block=topics_block,
-                                         samples_block=samples_block)
+                                         samples_block=samples_block,
+                                         weak_drop_hits=WEAK_DROP_HITS)
         raw = _chat_json(INDUCTION_SYSTEM_PROMPT, prompt)
 
         # 快照必须先拍（回滚依据），无论这次有没有产出建议
@@ -655,12 +668,17 @@ class LmaInductionService:
             # positive 会退化成 0，导致有正向历史的主题被误判为可淘汰。
             if int(topic.positive_count or 0) > 0:
                 continue  # 历史上拿到过正向反馈，只允许用户手动停用
-            if not evidence and not (int(topic.negative_count or 0) > 0):
-                continue  # 既无样本证据也无历史负反馈，不值得淘汰
+            # 第三道闸：至少要有某种负向证据——样本内命中（evidence）、历史负反馈，
+            # 或**反复屏蔽**（弱负信号，需达到 WEAK_DROP_HITS 次）。
+            # 弱信号单独不足以降权到停用，但足以支撑一条「可被用户拒绝的」建议。
+            weak_hits = int(topic.weak_hits or 0)
+            if (not evidence and not (int(topic.negative_count or 0) > 0)
+                    and weak_hits < WEAK_DROP_HITS):
+                continue  # 既无样本证据、也无历史负反馈、弱信号也不足，不值得淘汰
             prepared.append({
                 "kind": "drop", "name": topic.name, "target_id": topic.id,
                 "payload": {"from_weight": float(topic.weight or 0.0),
-                            "hits": stats["hits"]},
+                            "hits": stats["hits"], "weak_hits": weak_hits},
                 "reason": (item.get("reason") or "").strip()[:300],
                 "confidence": _clamp(_to_float(item.get("confidence"), 0.5), 0.0, 1.0),
                 "evidence": evidence,
