@@ -27,11 +27,28 @@ export interface AuthResponse {
   user: UserInfo
 }
 
+/** 站点注册准入策略（登录页据此决定是否显示「邀请码」输入框） */
+export interface RegistrationPolicy {
+  /** 是否开放自助注册（开放时无需邀请码） */
+  allow_register: boolean
+  /** 是否必须提供邀请码 */
+  require_invite: boolean
+  /** 是否至少有一种自助注册途径（开放注册 或 凭邀请码） */
+  registration_open: boolean
+}
+
 /**
  * 用户登录
  */
 export function login(params: LoginParams) {
   return request.post<AuthResponse>('/auth/login', params)
+}
+
+/**
+ * 查询注册准入策略（公开接口）
+ */
+export function getRegistrationPolicy() {
+  return request.get<RegistrationPolicy>('/auth/registration-policy')
 }
 
 /**

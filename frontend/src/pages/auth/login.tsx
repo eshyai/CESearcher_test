@@ -2,7 +2,7 @@ import * as api from '@/api'
 import { authActions } from '@/store/auth'
 import { KeyOutlined, LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons'
 import { Button, Form, Input, message } from 'antd'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import styles from './login.module.scss'
 
@@ -11,8 +11,25 @@ export default function LoginPage() {
   const location = useLocation()
   const [loading, setLoading] = useState(false)
   const [isLogin, setIsLogin] = useState(true)
+  // 是否必须填邀请码：由后端准入策略决定。开放注册时为 false → 直接隐藏该输入框，
+  // 避免同事看到一个「可留空」的邀请码框而无从下手。
+  const [requireInvite, setRequireInvite] = useState(false)
 
   const from = (location.state as any)?.from?.pathname || '/chat'
+
+  useEffect(() => {
+    // 拉不到策略时保持默认（显示邀请码框）：宁可多一个可留空的输入框，
+    // 也不要在真的需要邀请码时把它藏掉，导致谁也注册不了。
+    api.auth
+      .getRegistrationPolicy()
+      .then(({ data }) => {
+        setRequireInvite(Boolean(data?.require_invite))
+        if (data && !data.registration_open) {
+          message.warning('本站已关闭自助注册，请联系管理员开通账号')
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const onLogin = async (values: { username: string; password: string }) => {
     setLoading(true)
@@ -181,17 +198,20 @@ export default function LoginPage() {
                   />
                 </Form.Item>
 
-                <Form.Item
-                  name="invite_code"
-                  tooltip="站点关闭自助注册时需要，请向管理员索取；已开放注册时可留空"
-                >
-                  <Input
-                    prefix={<KeyOutlined className={styles['input-icon']} />}
-                    placeholder="邀请码（可留空）"
-                    size="large"
-                    className={styles['form-input']}
-                  />
-                </Form.Item>
+                {requireInvite && (
+                  <Form.Item
+                    name="invite_code"
+                    rules={[{ required: true, message: '请输入邀请码' }]}
+                    tooltip="本站需凭邀请码注册，请向管理员索取"
+                  >
+                    <Input
+                      prefix={<KeyOutlined className={styles['input-icon']} />}
+                      placeholder="邀请码"
+                      size="large"
+                      className={styles['form-input']}
+                    />
+                  </Form.Item>
+                )}
 
                 <Form.Item
                   name="password"

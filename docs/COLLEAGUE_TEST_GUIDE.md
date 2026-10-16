@@ -8,7 +8,7 @@
 
 ```bash
 cd /d/chemical-agent/industry-information-assistant-master
-IMAGE_TAG=v0.13 WEB_PORT=8080 ./compose.sh prod up build
+IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up build
 ```
 
 做的事：构建后端 / 前端镜像（代码固化进镜像，不挂源码）→ 起 3 个业务容器
@@ -60,11 +60,20 @@ Remove-NetFirewallRule -DisplayName "chemical-agent-web-8080"
 
 ## 四、同事怎么拿到账号
 
-注册入口**已关闭**（`ALLOW_REGISTER=false`），改为**邀请码**准入：
+**当前为开放自助注册**（`ALLOW_REGISTER=true`）：同事在登录页点「立即注册」，
+填用户名 / 邮箱 / 密码即可，**不需要邀请码**，注册完自动登录。
+登录页会向 `GET /auth/registration-policy` 查询准入策略，**开放注册时自动隐藏邀请码输入框**。
 
-- 邀请码 = 后端 `backend/.env` 里的 `REGISTER_INVITE_CODE`（登录页会多出一个「邀请码」输入框）。
-- 把邀请码发给同事，让他们在登录页自助注册即可。
-- 想临时开放注册：把 `ALLOW_REGISTER` 改回 `true` 后 `./compose.sh prod up -d --force-recreate backend`。
+想切回「凭邀请码注册」：
+
+```bash
+# 编辑 backend/.env：ALLOW_REGISTER=false（REGISTER_INVITE_CODE 保持非空）
+IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
+```
+
+此时登录页会自动重新出现邀请码输入框并变为必填。邀请码 = `backend/.env` 的 `REGISTER_INVITE_CODE`。
+
+想**完全关闭**自助注册：`ALLOW_REGISTER=false` + `REGISTER_INVITE_CODE` 留空 → 只能管理员建号。
 
 > 注意：安全收尾时换过 `JWT_SECRET_KEY`，**此前签发的登录态全部失效**，
 > 你自己也需要重新登录一次。
@@ -78,19 +87,20 @@ Remove-NetFirewallRule -DisplayName "chemical-agent-web-8080"
 ./compose.sh prod logs frontend      # 看 nginx 日志
 ./compose.sh prod logs backend       # 看接口日志
 ./compose.sh prod down               # 停业务容器（中间件保持运行）
-IMAGE_TAG=v0.13 ./compose.sh prod up # 用同一版本重新拉起
+IMAGE_TAG=v0.14 ./compose.sh prod up # 用同一版本重新拉起
 ```
 
 **回滚**：镜像打了标签，换回上一个可用标签即可：
 
 ```bash
-IMAGE_TAG=v0.12 ./compose.sh prod up
+IMAGE_TAG=v0.13 ./compose.sh prod up
 ```
 
-改代码后要生效**必须重新 build**（prod 不挂源码）：
+改代码后要生效**必须重新 build**（prod 不挂源码），**并且换一个新 tag**，
+这样旧 tag 仍是真实可回滚的点：
 
 ```bash
-IMAGE_TAG=v0.13 WEB_PORT=8080 ./compose.sh prod up build backend
+IMAGE_TAG=v0.15 WEB_PORT=8080 ./compose.sh prod up build backend
 ```
 
 ---
@@ -141,6 +151,9 @@ curl -s --noproxy '*' -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/aut
 curl -s --noproxy '*' -X POST http://127.0.0.1:8080/news/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"己二腈","industry_id":"chemical","top_k":3,"include_online":false}'
+
+# 5. 注册准入策略（开放注册应为 allow_register=true）
+curl -s --noproxy '*' http://127.0.0.1:8080/auth/registration-policy
 ```
 
 > 本机 curl 一定要带 `--noproxy '*'`，否则会走环境代理返回 502，误判成服务没起来。

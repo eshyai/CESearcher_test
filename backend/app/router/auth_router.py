@@ -36,6 +36,24 @@ REGISTER_INVITE_CODE = os.getenv("REGISTER_INVITE_CODE", "").strip()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
 
 
+@router.get("/registration-policy")
+def get_registration_policy() -> dict:
+    """站点注册准入策略（公开，供登录页决定是否显示「邀请码」输入框）。
+
+    只回传布尔位，**不回传邀请码本身**，因此可安全公开。
+
+    - ``allow_register=true``                              → 开放自助注册，无需邀请码
+    - ``allow_register=false`` 且 ``require_invite=true``  → 需凭邀请码注册
+    - 两者皆 false                                          → 已关闭自助注册
+    """
+    require_invite = (not ALLOW_REGISTER) and bool(REGISTER_INVITE_CODE)
+    return {
+        "allow_register": ALLOW_REGISTER,
+        "require_invite": require_invite,
+        "registration_open": ALLOW_REGISTER or require_invite,
+    }
+
+
 def get_user_by_username(db: Session, username: str) -> Optional[User]:
     """根据用户名获取用户"""
     return db.query(User).filter(User.username == username).first()
