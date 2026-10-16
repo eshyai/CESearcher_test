@@ -14,6 +14,7 @@ import {
   Select,
   Switch,
   Drawer,
+  Popover,
 } from 'antd'
 import {
   FileTextOutlined,
@@ -26,6 +27,7 @@ import {
   CloseCircleOutlined,
   EyeInvisibleOutlined,
   UndoOutlined,
+  EditOutlined,
 } from '@ant-design/icons'
 import { useSnapshot } from 'valtio'
 import { authState } from '@/store/auth'
@@ -95,6 +97,11 @@ export default function NewsPage() {
   const [hiddenList, setHiddenList] = useState<NewsItem[]>([])
   const [hiddenLoading, setHiddenLoading] = useState(false)
   const [hidingId, setHidingId] = useState<string | null>(null)
+
+  // 备注（news_feedback.note）：只有自己可见，会作为 L2a 偏好归纳的输入
+  const [noteEditingId, setNoteEditingId] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
 
   // 碎片检索状态（searchQuery 非空 = 处于检索模式）
   const [searchInput, setSearchInput] = useState('')
@@ -313,6 +320,63 @@ export default function NewsPage() {
           >
             不相关
           </Button>
+          {/* 备注：写给自己看的判断依据，只有自己可见（后端按 user_id 隔离），会作为偏好归纳的输入 */}
+          {item.id && (
+            <Popover
+              trigger="click"
+              placement="topRight"
+              open={noteEditingId === item.id}
+              onOpenChange={(open) => handleNoteOpenChange(open, item)}
+              content={
+                <div className={styles['note-editor']}>
+                  <div className={styles['note-editor-tip']}>
+                    备注只有你自己可见，会用于优化你的推荐
+                  </div>
+                  <Input.TextArea
+                    autoFocus
+                    rows={3}
+                    maxLength={2000}
+                    showCount
+                    value={noteDraft}
+                    placeholder="例如：与我在跟的 PA66 技改相关，重点关注产能与开工率"
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                  />
+                  <div className={styles['note-editor-actions']}>
+                    <Button size="small" onClick={() => setNoteEditingId(null)}>
+                      取消
+                    </Button>
+                    {item.feedback?.note ? (
+                      <Button
+                        size="small"
+                        danger
+                        loading={noteSaving}
+                        onClick={() => saveNote(item, '')}
+                      >
+                        清除
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={noteSaving}
+                      onClick={() => saveNote(item, noteDraft)}
+                    >
+                      保存
+                    </Button>
+                  </div>
+                </div>
+              }
+            >
+              <Button
+                size="small"
+                type={item.feedback?.note ? 'primary' : 'default'}
+                icon={<EditOutlined />}
+                onClick={(e) => e.stopPropagation()}
+              >
+                备注
+              </Button>
+            </Popover>
+          )}
           {/* 个人屏蔽：只让自己看不到，不删除共享库、不影响他人（可随时恢复） */}
           {item.id && (
             <Button
@@ -326,6 +390,20 @@ export default function NewsPage() {
           )}
         </span>
       </div>
+      {/* 我的备注：只有自己可见；点一下即可修改 */}
+      {item.feedback?.note ? (
+        <div
+          className={styles['news-note']}
+          title="点击修改备注"
+          onClick={(e) => {
+            e.stopPropagation()
+            openNote(item)
+          }}
+        >
+          <EditOutlined />
+          <span className={styles['news-note-text']}>{item.feedback.note}</span>
+        </div>
+      ) : null}
     </div>
   )
 
@@ -353,6 +431,63 @@ export default function NewsPage() {
       }
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '反馈保存失败')
+    }
+  }
+
+  // ---- 备注（news_feedback.note）----
+  // 只有自己可见：后端按 user_id 隔离；保存后还会作为 L2a 偏好归纳的输入（截 80 字喂模型）。
+  const openNote = (item: NewsItem) => {
+    setNoteEditingId(item.id)
+    setNoteDraft(item.feedback?.note || '')
+  }
+
+  const handleNoteOpenChange = (open: boolean, item: NewsItem) => {
+    if (open) {
+      openNote(item)
+    } else {
+      setNoteEditingId((prev) => (prev === item.id ? null : prev))
+    }
+  }
+
+  // 本地乐观更新「列表」与「检索结果」两张列表，避免整页重拉导致骨架屏闪烁
+  const applyNoteLocally = (item: NewsItem, note: string) => {
+    const patch = (n: NewsItem): NewsItem =>
+      n.id === item.id
+        ? {
+            ...n,
+            feedback: n.feedback
+              ? { ...n.feedback, note }
+              : { interested: null, relevant: null, note },
+          }
+        : n
+    setNewsList((prev) => prev.map(patch))
+    setSearchResults((prev) => prev.map(patch))
+  }
+
+  // raw 传 '' 即为清除备注
+  const saveNote = async (item: NewsItem, raw: string) => {
+    if (!item.id) return
+    const note = raw.trim()
+    if (note === (item.feedback?.note || '')) {
+      setNoteEditingId(null)
+      return
+    }
+    // 后端要求 interested / relevant / note 至少给一项：清空备注时若这条没有任何按钮反馈会被拒
+    const hasSignal = item.feedback?.interested != null || item.feedback?.relevant != null
+    if (!note && !hasSignal) {
+      message.warning('备注不能为空；如果这条你不想再看到，可以用右侧的「屏蔽」')
+      return
+    }
+    setNoteSaving(true)
+    try {
+      await api.news.submitNewsFeedback(item.id, { note })
+      applyNoteLocally(item, note)
+      setNoteEditingId(null)
+      message.success(note ? '备注已保存（只有你自己可见）' : '备注已清除')
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '备注保存失败')
+    } finally {
+      setNoteSaving(false)
     }
   }
 

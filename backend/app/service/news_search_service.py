@@ -22,7 +22,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from config.industry_config import DEFAULT_INDUSTRY_ID
-from models.news import IndustryNews
+from models.news import IndustryNews, NewsFeedback
 from service.dedup_service import normalize_title, titles_same_article
 from service.industry_relevance_service import get_industry_relevance_service
 from service.news_hidden_service import hidden_news_ids
@@ -341,6 +341,28 @@ class NewsSearchService:
         # 保证屏蔽对「库内 + 全网」一致生效。
         if hidden_ids:
             data = [it for it in data if str(it.get("id") or "") not in hidden_ids]
+
+        # ---- 7c) 附带当前用户自己的反馈（含备注）----
+        # 口径与 /news/list 完全一致：反馈与备注按 user_id 隔离，只有本人能看到自己的。
+        # 放在沉淀之后，这样刚入库的全网结果也能按最终 id 对齐（新入库的必然没有反馈）。
+        if user_id:
+            final_ids = [it.get("id") for it in data if it.get("id")]
+            if final_ids:
+                feedback_map = {
+                    str(f.news_id): f
+                    for f in self.db.query(NewsFeedback).filter(
+                        NewsFeedback.user_id == user_id,
+                        NewsFeedback.news_id.in_(final_ids),
+                    ).all()
+                }
+                for item in data:
+                    f = feedback_map.get(str(item.get("id")))
+                    if f is not None:
+                        item["feedback"] = {
+                            "interested": f.interested,
+                            "relevant": f.relevant,
+                            "note": f.note,
+                        }
 
         return {
             "query": query,
