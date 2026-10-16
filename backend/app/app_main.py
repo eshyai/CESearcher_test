@@ -65,11 +65,19 @@ async def lifespan(app: FastAPI):
         logger.error(f"定时任务调度器关闭失败: {e}")
 
 
+# 交互式文档（/docs、/redoc、/openapi.json）会完整暴露 API 地图，含内部调试端点。
+# 用 env 控制而非硬编码：本地开发照常可用，生产关掉。
+# ⚠️ 与注册准入同理，此值在模块导入时读取，改 env 后必须重建容器才生效。
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "true").strip().lower() in ("1", "true", "yes", "on")
+
 app = FastAPI(
     title="行业信息助手 API",
     description="基于 AI Agent 的行业信息助手系统",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
 
 # 添加 CORS 中间件

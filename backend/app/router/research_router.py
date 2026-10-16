@@ -11,7 +11,7 @@ from core.redis_client import cache  # 导入 Redis 缓存
 
 # 鉴权：本地知识库检索按用户隔离，必须拿到调用者身份
 from models.user import User
-from router.auth_router import get_current_user
+from router.auth_router import get_current_user_required
 
 # V2 导入
 from service.deep_research_v2.service import DeepResearchV2Service
@@ -81,7 +81,7 @@ def get_research_service_v2():
 @router.post("/stream", status_code=HTTP_200_OK)
 async def stream_research(
     request: ResearchRequest,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_required),
     services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
@@ -113,7 +113,7 @@ async def stream_research(
                     query=request.query,
                     session_id=request.session_id,
                     kb_name=request.kb_name,
-                    user_id=str(current_user.id) if current_user else None,
+                    user_id=str(current_user.id),
                     search_web=search_web,
                     search_local=search_local
                 ):
@@ -160,7 +160,7 @@ async def stream_research_get(
     search_web: bool = Query(True, description="是否搜索网络"),
     search_local: bool = Query(True, description="是否搜索本地知识库"),
     version: str = Query("v1", description="版本: v1 或 v2"),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_required),
     services: Dict[str, Any] = Depends(get_research_service)
 ):
     """
@@ -191,7 +191,7 @@ async def stream_research_get(
                 async for event in service_v2.research(
                     query=query,
                     kb_name=kb_name,
-                    user_id=str(current_user.id) if current_user else None,
+                    user_id=str(current_user.id),
                     search_web=search_web,
                     search_local=search_local
                 ):
@@ -232,7 +232,9 @@ async def stream_research_get(
 
 
 @router.get("/test-wizard", status_code=HTTP_200_OK)
-async def test_wizard_endpoint():
+async def test_wizard_endpoint(
+    current_user: User = Depends(get_current_user_required)
+):
     """
     测试 CodeWizard 数据分析功能（绕过搜索阶段）
 
@@ -318,7 +320,10 @@ async def test_wizard_endpoint():
 
 
 @router.post("/cancel/{session_id}", status_code=HTTP_200_OK)
-async def cancel_research(session_id: str):
+async def cancel_research(
+    session_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
     """
     取消正在进行的研究任务
 
@@ -368,7 +373,10 @@ def clear_cancel_flag(session_id: str):
 # ============ 检查点 API ============
 
 @router.get("/checkpoint/{session_id}", status_code=HTTP_200_OK)
-async def get_checkpoint(session_id: str):
+async def get_checkpoint(
+    session_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
     """
     获取研究检查点信息
 
@@ -391,7 +399,10 @@ async def get_checkpoint(session_id: str):
 
 
 @router.get("/checkpoint/{session_id}/full", status_code=HTTP_200_OK)
-async def get_full_checkpoint(session_id: str):
+async def get_full_checkpoint(
+    session_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
     """
     获取完整的研究检查点（包含 UI 状态和报告）
 
@@ -421,7 +432,8 @@ async def get_full_checkpoint(session_id: str):
 @router.get("/checkpoints", status_code=HTTP_200_OK)
 async def list_checkpoints(
     status: Optional[str] = Query(None, description="过滤状态: running/paused/completed/failed"),
-    limit: int = Query(20, ge=1, le=100, description="返回数量限制")
+    limit: int = Query(20, ge=1, le=100, description="返回数量限制"),
+    current_user: User = Depends(get_current_user_required)
 ):
     """
     列出研究检查点
@@ -444,7 +456,10 @@ async def list_checkpoints(
 
 
 @router.delete("/checkpoint/{session_id}", status_code=HTTP_200_OK)
-async def delete_checkpoint(session_id: str):
+async def delete_checkpoint(
+    session_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
     """
     删除研究检查点
 
@@ -467,7 +482,10 @@ async def delete_checkpoint(session_id: str):
 
 
 @router.post("/resume/{session_id}", status_code=HTTP_200_OK)
-async def resume_research(session_id: str):
+async def resume_research(
+    session_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
     """
     恢复研究任务（从检查点）
 
