@@ -51,6 +51,9 @@ data/
 *.cache
 USER_ACTION.md
 
+# 中间件数据卷备份（Milvus / etcd 等，运维快照非源码）
+backups/
+
 # WorkBuddy local session data
 .workbuddy/
 

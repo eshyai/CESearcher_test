@@ -21,6 +21,7 @@ load_dotenv()
 
 from models.chat import ChatSession, ChatMessage, LongTermMemory
 from service.embedding_service import generate_embedding
+from service.milvus_guard import safe_load
 from service.milvus_service import get_milvus_service, MilvusService
 
 # 记忆触发阈值（token）。中文约 3 字符/token，默认 1500 约合 4500 字符，
@@ -78,7 +79,7 @@ class MemoryService:
             "params": {"nlist": 128},
         }
         collection.create_index(field_name="vector", index_params=index_params)
-        collection.load()
+        safe_load(collection, collection_name)
 
         print(f"记忆集合 {collection_name} 创建成功")
 
@@ -358,7 +359,7 @@ class MemoryService:
         if documents_to_insert:
             try:
                 collection = Collection(MEMORY_COLLECTION_NAME)
-                collection.load()
+                safe_load(collection, MEMORY_COLLECTION_NAME)
 
                 ids = [doc["id"] for doc in documents_to_insert]
                 user_ids = [doc["user_id"] for doc in documents_to_insert]
@@ -413,7 +414,7 @@ class MemoryService:
 
         try:
             collection = Collection(MEMORY_COLLECTION_NAME)
-            collection.load()
+            safe_load(collection, MEMORY_COLLECTION_NAME)
 
             # 按用户过滤
             expr = f'user_id == "{user_id}"'

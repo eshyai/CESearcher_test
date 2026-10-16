@@ -10,6 +10,8 @@ from pymilvus import (
     utility,
 )
 
+from service.milvus_guard import safe_load
+
 
 class MilvusService:
     """Milvus 向量存储服务"""
@@ -47,7 +49,7 @@ class MilvusService:
         if utility.has_collection(collection_name):
             print(f"集合 {collection_name} 已存在")
             collection = Collection(collection_name)
-            collection.load()
+            safe_load(collection, collection_name)
             return collection
 
         # 定义字段
@@ -73,7 +75,7 @@ class MilvusService:
         collection.create_index(field_name="vector", index_params=index_params)
 
         # 加载集合到内存
-        collection.load()
+        safe_load(collection, collection_name)
 
         print(f"集合 {collection_name} 创建成功")
         return collection
@@ -143,7 +145,7 @@ class MilvusService:
             return []
 
         collection = Collection(collection_name)
-        collection.load()
+        safe_load(collection, collection_name)
 
         # 构建过滤表达式
         expr = f'kb_id == "{kb_id}"' if kb_id else None
@@ -265,7 +267,7 @@ class MilvusService:
 
         try:
             collection = Collection(collection_name)
-            collection.load()
+            safe_load(collection, collection_name)
 
             # 查询表达式
             expr = f'filename == "{filename}"'

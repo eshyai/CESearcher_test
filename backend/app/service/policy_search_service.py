@@ -10,6 +10,7 @@ from pymilvus import (
     utility,
 )
 from service.embedding_service import generate_embedding
+from service.milvus_guard import safe_load
 
 
 class PolicySearchService:
@@ -40,7 +41,7 @@ class PolicySearchService:
         try:
             if utility.has_collection(self.collection_name):
                 collection = Collection(self.collection_name)
-                collection.load()
+                safe_load(collection, self.collection_name)
                 return collection
 
             # 创建集合
@@ -65,7 +66,7 @@ class PolicySearchService:
                 "params": {"nlist": 128},
             }
             collection.create_index(field_name="vector", index_params=index_params)
-            collection.load()
+            safe_load(collection, self.collection_name)
 
             print(f"集合 {self.collection_name} 创建成功")
             return collection

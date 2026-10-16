@@ -31,6 +31,14 @@ from sqlalchemy.orm import Session
 from config.industry_config import DEFAULT_INDUSTRY_ID
 from models.news import IndustryNews
 
+# Milvus 是「增强」而非「必需」：它不可用时检索应退化为关键词召回，而不是把主入口拖死。
+# 超时保护统一收口在 milvus_guard，这里重新导出以保持既有 import 路径可用。
+from service.milvus_guard import (  # noqa: F401  (MILVUS_OP_TIMEOUT / MilvusUnavailableError 对外兼容)
+    MILVUS_OP_TIMEOUT,
+    MilvusUnavailableError,
+    safe_load,
+)
+
 logger = logging.getLogger(__name__)
 
 VECTOR_DIM = 1024                              # 与 text-embedding-v4 默认维度一致
@@ -38,18 +46,6 @@ EMBED_MODEL = os.getenv("NEWS_EMBED_MODEL", "text-embedding-v4")
 EMBED_MAX_CHARS = int(os.getenv("NEWS_EMBED_MAX_CHARS", "1200"))  # 送 embedding 的正文截断
 EMBED_BATCH = 10                               # 阿里 embedding 单次批量上限
 COLLECTION_PREFIX = "news_"
-
-# Milvus 是「增强」而非「必需」：它不可用时检索应退化为关键词召回，而不是把主入口拖死。
-# 单次 load / 查询的超时（秒）。超时即视为不可用并抛错，交由上层降级。
-MILVUS_OP_TIMEOUT = int(os.getenv("MILVUS_OP_TIMEOUT", "15"))
-
-
-class MilvusUnavailableError(RuntimeError):
-    """Milvus 不可用（加载 / 查询超时或报错）。
-
-    单独一个异常类型，是为了让调用方能区分「向量库坏了」与「向量库正常但没有结果」：
-    前者应降级为关键词检索，后者是正常的空结果。
-    """
 
 
 def collection_name(industry_id: Optional[str]) -> str:
@@ -110,18 +106,12 @@ class NewsIndexService:
 
     @staticmethod
     def _load(collection: Collection, name: str) -> None:
-        """带超时地加载集合。
+        """带超时地加载集合（转发到 milvus_guard.safe_load）。
 
         必须显式给 timeout：pymilvus 的 ``load()`` 默认**无限等待**，Milvus 侧异常时
         整条链路会一直挂着而不是抛错，上层已有的降级分支就永远等不到。
         """
-        try:
-            collection.load(timeout=MILVUS_OP_TIMEOUT)
-        except Exception as e:
-            raise MilvusUnavailableError(
-                f"集合 {name} 加载失败（超时 {MILVUS_OP_TIMEOUT}s）: "
-                f"{type(e).__name__}: {str(e)[:200]}"
-            ) from e
+        safe_load(collection, name)
 
     def ensure_collection(self, name: str) -> Collection:
         """取得（必要时创建）资讯集合。"""
