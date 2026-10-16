@@ -31,8 +31,17 @@ class ChatService:
         self.web_search_service = web_search_service
         self.session_service = session_service
         self.openai_api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-        self.openai_base_url = os.environ.get("OPENAI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.openai_model = os.environ.get("OPENAI_MODEL", "deepseek-r1")
+        # 回落到 DASHSCOPE_BASE_URL，避免与其它 AI 调用点走不同端点（见 llm_config 注释）
+        self.openai_base_url = (
+            os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("DASHSCOPE_BASE_URL")
+            or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        self.openai_model = (
+            os.environ.get("OPENAI_MODEL")
+            or os.environ.get("LLM_MODEL")
+            or "qwen-plus"
+        )
         self.encoding = tiktoken.get_encoding("cl100k_base")  # OpenAI通用编码
         self.max_tokens = 12000  # 最大token数量限制
     

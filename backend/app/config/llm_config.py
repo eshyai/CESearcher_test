@@ -19,6 +19,17 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
 
+def resolve_model(specific_env: str, default: str) -> str:
+    """模型名解析优先级：专属 env > 全局 LLM_MODEL > 代码默认。
+
+    集中在一处解析，是为了「换 AI 供应商」时只改 `LLM_MODEL` 一个变量就能
+    整体切换；个别 agent 需要更强的模型时，再用专属变量（如 `LLM_MODEL_WRITER`）
+    单独覆盖。代码默认值只是兜底，**实际部署必须由 env 指定可用的模型名**——
+    否则会像 `deepseek-v3.2` 那样在新供应商上 404。
+    """
+    return os.getenv(specific_env) or os.getenv("LLM_MODEL") or default
+
+
 @dataclass
 class AgentModelConfig:
     """单个 Agent 的模型配置"""
@@ -36,45 +47,45 @@ class AgentModelConfig:
 
 @dataclass
 class AgentsConfig:
-    """所有 Agent 的配置"""
+    """所有 Agent 的配置（模型名统一经 resolve_model 从 env 解析）"""
     # 规划师 - 分析问题，生成研究大纲
     architect: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model=resolve_model("LLM_MODEL_ARCHITECT", "qwen-plus"),
         temperature=0.7,
         max_tokens=4000
     ))
 
     # 侦察员 - 深度搜索（使用较快的模型）
     scout: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="qwen-plus",  # 搜索阶段用快速模型
+        model=resolve_model("LLM_MODEL_SCOUT", "qwen-flash"),  # 搜索阶段用快速模型
         temperature=0.5,
         max_tokens=4000
     ))
 
     # 数据分析师 - 数据提取和分析
     data_analyst: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model=resolve_model("LLM_MODEL_DATA_ANALYST", "qwen-plus"),
         temperature=0.3,
         max_tokens=8000
     ))
 
     # 代码极客 - 代码生成和图表绘制
     wizard: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model=resolve_model("LLM_MODEL_WIZARD", "qwen-plus"),
         temperature=0.3,
         max_tokens=8000
     ))
 
     # 审核大师 - 对抗式审核
     critic: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model=resolve_model("LLM_MODEL_CRITIC", "qwen-plus"),
         temperature=0.5,
         max_tokens=4000
     ))
 
     # 首席写手 - 报告撰写
     writer: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model=resolve_model("LLM_MODEL_WRITER", "qwen-plus"),
         temperature=0.7,
         max_tokens=16000
     ))
@@ -108,16 +119,23 @@ class LLMConfig:
     """
     # API 配置
     api_key: str = field(default_factory=lambda: os.getenv("DASHSCOPE_API_KEY", ""))
-    base_url: str = field(default_factory=lambda: os.getenv(
-        "LLM_BASE_URL",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # base_url 解析优先级：LLM_BASE_URL > DASHSCOPE_BASE_URL > 公网 DashScope。
+    # 回落到 DASHSCOPE_BASE_URL 很关键：本项目其它 6 个 AI 调用点（检索 rerank、
+    # embedding、行业闸、抽取、LMA、记忆库）都读它，六智能体若独走公网会出现
+    # 「同一个 key、两套端点、一半能用一半 404」的割裂状态。
+    base_url: str = field(default_factory=lambda: (
+        os.getenv("LLM_BASE_URL")
+        or os.getenv("DASHSCOPE_BASE_URL")
+        or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     ))
 
     # 搜索 API
     search_api_key: str = field(default_factory=lambda: os.getenv("BOCHA_API_KEY", ""))
 
     # 默认模型（用于未单独配置的场景）
-    default_model: str = "deepseek-v3.2"
+    default_model: str = field(
+        default_factory=lambda: os.getenv("LLM_MODEL", "qwen-plus")
+    )
 
     # Agent 配置
     agents: AgentsConfig = field(default_factory=AgentsConfig)
