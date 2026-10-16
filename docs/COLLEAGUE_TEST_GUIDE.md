@@ -8,8 +8,10 @@
 
 ```bash
 cd /d/chemical-agent/industry-information-assistant-master
-IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up build
+IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up build
 ```
+
+> 当前线上标签 = **`v0.17-news-note`**（上一版 `v0.16-model-fix` 仍可回滚）。
 
 做的事：构建后端 / 前端镜像（代码固化进镜像，不挂源码）→ 起 3 个业务容器
 （`industry_backend` / `industry_worker` / `industry_frontend`）→ 复用已在跑的中间件。
@@ -40,11 +42,12 @@ IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up build
 
 当前 WLAN 是 **Public** 网络配置文件，Windows 默认**禁止一切入站**。不放行的话同事会一直连不上。
 
-以**管理员身份**打开 PowerShell，执行：
+以**管理员身份**打开 PowerShell，执行（**来源限定到热点网段**，不要用 `-RemoteAddress Any`）：
 
 ```powershell
 New-NetFirewallRule -DisplayName "chemical-agent-web-8080" `
-  -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Any
+  -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow `
+  -Profile Any -RemoteAddress 192.168.43.0/24
 ```
 
 撤销（测试结束后）：
@@ -53,6 +56,14 @@ New-NetFirewallRule -DisplayName "chemical-agent-web-8080" `
 Remove-NetFirewallRule -DisplayName "chemical-agent-web-8080"
 ```
 
+> ⚠️ **规则只能同名存在一条**：本机曾累积出 3 条同名规则（其中一条 `-RemoteAddress` 是「任何」）。
+> `Remove-NetFirewallRule` 按名删除会**一次删掉全部同名规则**，删完再重建一条即可。
+> 排查用（沙箱里 `Get-NetFirewallRule` 常被拦，netsh 更可靠）：
+> `netsh advfirewall firewall show rule name=all dir=in` 重定向到文件后用 `iconv -f GBK -t UTF-8` 看。
+>
+> ⚠️ 收窄成 `192.168.43.0/24` 后，**走 aTrust VPN 的同事会连不上**（VPN 网段是 `10.184.0.x`）。
+> 两边都要覆盖就多加一条、或把上面那条写成 `-RemoteAddress 192.168.43.0/24,10.184.0.0/24`。
+>
 > 中间件（PG / Redis / Milvus / MinIO）在安全收尾时已全部收敛到 `127.0.0.1`，
 > 同事只能从 8080 这一个口进前端，碰不到数据库。
 
@@ -68,7 +79,7 @@ Remove-NetFirewallRule -DisplayName "chemical-agent-web-8080"
 
 ```bash
 # 编辑 backend/.env：ALLOW_REGISTER=false（REGISTER_INVITE_CODE 保持非空）
-IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
+IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
 ```
 
 此时登录页会自动重新出现邀请码输入框并变为必填。邀请码 = `backend/.env` 的 `REGISTER_INVITE_CODE`。
@@ -87,21 +98,24 @@ IMAGE_TAG=v0.14 WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
 ./compose.sh prod logs frontend      # 看 nginx 日志
 ./compose.sh prod logs backend       # 看接口日志
 ./compose.sh prod down               # 停业务容器（中间件保持运行）
-IMAGE_TAG=v0.14 ./compose.sh prod up # 用同一版本重新拉起
+IMAGE_TAG=v0.17-news-note ./compose.sh prod up  # 用同一版本重新拉起
 ```
 
 **回滚**：镜像打了标签，换回上一个可用标签即可：
 
 ```bash
-IMAGE_TAG=v0.13 ./compose.sh prod up
+IMAGE_TAG=v0.16-model-fix ./compose.sh prod up
 ```
 
 改代码后要生效**必须重新 build**（prod 不挂源码），**并且换一个新 tag**，
 这样旧 tag 仍是真实可回滚的点：
 
 ```bash
-IMAGE_TAG=v0.15 WEB_PORT=8080 ./compose.sh prod up build backend
+IMAGE_TAG=v0.18-<新功能名> WEB_PORT=8080 ./compose.sh prod up build
 ```
+
+> 后端与前端是**两个镜像**（`chemical-agent-backend` / `chemical-agent-frontend`），
+> 只改前端也要整条 `up build`（`build backend` 只构建后端）。
 
 ---
 
