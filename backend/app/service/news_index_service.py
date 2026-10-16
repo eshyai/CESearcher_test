@@ -39,6 +39,18 @@ EMBED_MAX_CHARS = int(os.getenv("NEWS_EMBED_MAX_CHARS", "1200"))  # 送 embeddin
 EMBED_BATCH = 10                               # 阿里 embedding 单次批量上限
 COLLECTION_PREFIX = "news_"
 
+# Milvus 是「增强」而非「必需」：它不可用时检索应退化为关键词召回，而不是把主入口拖死。
+# 单次 load / 查询的超时（秒）。超时即视为不可用并抛错，交由上层降级。
+MILVUS_OP_TIMEOUT = int(os.getenv("MILVUS_OP_TIMEOUT", "15"))
+
+
+class MilvusUnavailableError(RuntimeError):
+    """Milvus 不可用（加载 / 查询超时或报错）。
+
+    单独一个异常类型，是为了让调用方能区分「向量库坏了」与「向量库正常但没有结果」：
+    前者应降级为关键词检索，后者是正常的空结果。
+    """
+
 
 def collection_name(industry_id: Optional[str]) -> str:
     """资讯集合名：news_{industry_id}。"""
@@ -96,11 +108,26 @@ class NewsIndexService:
             logger.error(f"[news_index] 连接 Milvus 失败: {e}")
             raise
 
+    @staticmethod
+    def _load(collection: Collection, name: str) -> None:
+        """带超时地加载集合。
+
+        必须显式给 timeout：pymilvus 的 ``load()`` 默认**无限等待**，Milvus 侧异常时
+        整条链路会一直挂着而不是抛错，上层已有的降级分支就永远等不到。
+        """
+        try:
+            collection.load(timeout=MILVUS_OP_TIMEOUT)
+        except Exception as e:
+            raise MilvusUnavailableError(
+                f"集合 {name} 加载失败（超时 {MILVUS_OP_TIMEOUT}s）: "
+                f"{type(e).__name__}: {str(e)[:200]}"
+            ) from e
+
     def ensure_collection(self, name: str) -> Collection:
         """取得（必要时创建）资讯集合。"""
         if utility.has_collection(name):
             collection = Collection(name)
-            collection.load()
+            self._load(collection, name)
             return collection
 
         fields = [
@@ -122,7 +149,7 @@ class NewsIndexService:
             field_name="vector",
             index_params={"metric_type": "COSINE", "index_type": "AUTOINDEX"},
         )
-        collection.load()
+        self._load(collection, name)
         logger.info(f"[news_index] 集合 {name} 创建成功")
         return collection
 
@@ -234,8 +261,13 @@ class NewsIndexService:
         if not utility.has_collection(name):
             return set()
         collection = Collection(name)
-        collection.load()
-        rows = collection.query(expr='id != ""', output_fields=["id"], limit=16384)
+        self._load(collection, name)
+        try:
+            rows = collection.query(expr='id != ""', output_fields=["id"], limit=16384)
+        except Exception as e:
+            raise MilvusUnavailableError(
+                f"集合 {name} 查询已索引 id 失败: {type(e).__name__}: {str(e)[:200]}"
+            ) from e
         return {str(r["id"]) for r in rows}
 
     def index_missing(
@@ -294,17 +326,22 @@ class NewsIndexService:
             return []
 
         collection = Collection(name)
-        collection.load()
+        self._load(collection, name)
 
         expr = f'event_type == "{event_type}"' if event_type else None
-        results = collection.search(
-            data=[vec],
-            anns_field="vector",
-            param={"metric_type": "COSINE", "params": {"nprobe": 10}},
-            limit=max(1, top_k),
-            expr=expr,
-            output_fields=["id", "title"],
-        )
+        try:
+            results = collection.search(
+                data=[vec],
+                anns_field="vector",
+                param={"metric_type": "COSINE", "params": {"nprobe": 10}},
+                limit=max(1, top_k),
+                expr=expr,
+                output_fields=["id", "title"],
+            )
+        except Exception as e:
+            raise MilvusUnavailableError(
+                f"集合 {name} 向量检索失败: {type(e).__name__}: {str(e)[:200]}"
+            ) from e
         hits: List[Tuple[str, float]] = []
         for group in results:
             for hit in group:
