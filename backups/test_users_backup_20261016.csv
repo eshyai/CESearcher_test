@@ -1,0 +1,6 @@
+id,username,email,created_at
+391ff617-fbf5-4e11-ad0b-ad5993d381ff,hidden_a_bd9b757f,hidden_a_bd9b757f@example.com,2026-10-16 01:58:56.26243+08
+47e7a047-398a-4138-8134-cb2a5a2f109f,hidden_b_bd9b757f,hidden_b_bd9b757f@example.com,2026-10-16 01:58:56.36348+08
+e480b2c0-ebc9-44a0-b3bb-ef63ffb40f10,hidden_a_9ebefe87,hidden_a_9ebefe87@example.com,2026-10-16 02:04:32.278929+08
+a4557f03-952f-49ba-b237-22c14f34b0c5,hidden_b_9ebefe87,hidden_b_9ebefe87@example.com,2026-10-16 02:04:32.344372+08
+(4 rows)

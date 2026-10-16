@@ -1,6 +1,6 @@
 import * as api from '@/api'
 import { authActions } from '@/store/auth'
-import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons'
+import { KeyOutlined, LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons'
 import { Button, Form, Input, message } from 'antd'
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -33,6 +33,7 @@ export default function LoginPage() {
     email: string
     password: string
     confirmPassword: string
+    invite_code?: string
   }) => {
     if (values.password !== values.confirmPassword) {
       message.error('两次输入的密码不一致')
@@ -45,6 +46,8 @@ export default function LoginPage() {
         username: values.username,
         email: values.email,
         password: values.password,
+        // 未开放自助注册时后端要求；为空则不发送该字段
+        invite_code: values.invite_code?.trim() || undefined,
       })
       authActions.login(data.access_token, data.user)
       message.success('注册成功')
@@ -173,6 +176,18 @@ export default function LoginPage() {
                   <Input
                     prefix={<MailOutlined className={styles['input-icon']} />}
                     placeholder="邮箱"
+                    size="large"
+                    className={styles['form-input']}
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  name="invite_code"
+                  tooltip="站点关闭自助注册时需要，请向管理员索取；已开放注册时可留空"
+                >
+                  <Input
+                    prefix={<KeyOutlined className={styles['input-icon']} />}
+                    placeholder="邀请码（可留空）"
                     size="large"
                     className={styles['form-input']}
                   />

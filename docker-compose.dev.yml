@@ -29,7 +29,8 @@ services:
       # 采集调度由独立 worker 承担，开发时不要内嵌到 API 进程
       ENABLE_EMBEDDED_SCHEDULER: "false"
     ports:
-      - "8200:8200"
+      # 只绑回环：宿主调试用 localhost:8200 即可，不需要对局域网开放
+      - "127.0.0.1:8200:8200"
     volumes:
       # 只挂代码目录，site-packages 留在镜像里不受影响
       - ./backend/app:/app
@@ -51,7 +52,8 @@ services:
     container_name: industry_frontend
     restart: unless-stopped
     ports:
-      - "5183:5183"
+      # dev 前端只给自己用；对外演示请走 prod 模式的前端容器
+      - "127.0.0.1:5183:5183"
     volumes:
       # 源码挂载；node_modules 用命名卷隔离（首次启动会从镜像里带出来）
       - ./frontend:/app

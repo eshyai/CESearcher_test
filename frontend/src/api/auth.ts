@@ -9,6 +9,8 @@ export interface RegisterParams {
   username: string
   email: string
   password: string
+  /** 邀请码：站点关闭自助注册时后端会要求（由 ALLOW_REGISTER / REGISTER_INVITE_CODE 决定） */
+  invite_code?: string
 }
 
 export interface UserInfo {

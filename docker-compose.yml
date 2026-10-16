@@ -10,7 +10,8 @@ services:
       POSTGRES_DB: industry_assistant
       TZ: Asia/Shanghai
     ports:
-      - "5432:5432"
+      # 只绑回环：宿主机仍可用 localhost 直连，局域网/同事无法直连数据库
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db:/docker-entrypoint-initdb.d
@@ -29,7 +30,8 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      # 只绑回环（Redis 未设密码，绝不能对局域网开放）
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -69,8 +71,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     ports:
-      - "9001:9001"
-      - "9000:9000"
+      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:9000:9000"
     volumes:
       - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
@@ -93,8 +95,8 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
     depends_on:
       - etcd
       - minio
@@ -115,8 +117,11 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "1256:9200"
+    # 不对宿主暴露：1256 落在 Windows Hyper-V 保留端口段，绑回环也会被拒
+    # （bound forbidden）。ES 只在容器网络内被使用，无需宿主直连。
+    # 如确需直连，请换一个未被保留的端口再打开下面一行。
+    # ports:
+    #   - "127.0.0.1:1256:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:

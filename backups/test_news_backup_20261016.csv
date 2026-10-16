@@ -1,0 +1,8 @@
+id,industry_id,event_type,title,source,source_url,impact_direction,publish_time,collected_at
+957f0ccf-938e-4d9b-a2dc-8c17e0968072,chemical,__hidden_test_bd9b757f__,屏蔽自测资讯 bd9b757f 第 0 条,屏蔽自测,https://example.com/hidden-test/bd9b757f/0,,,2026-10-16 01:58:56.411811
+8b5804c4-2ca9-44c7-ba6f-80868a3dab60,chemical,__hidden_test_bd9b757f__,屏蔽自测资讯 bd9b757f 第 1 条,屏蔽自测,https://example.com/hidden-test/bd9b757f/1,,,2026-10-16 01:58:56.41192
+90c3ad38-446e-4fb4-8d1d-0ebfd16ee467,chemical,__hidden_test_bd9b757f__,屏蔽自测资讯 bd9b757f 第 2 条,屏蔽自测,https://example.com/hidden-test/bd9b757f/2,,,2026-10-16 01:58:56.412079
+3f716f10-d606-4d2b-9bbe-3d2bb3024150,chemical,__hidden_test_9ebefe87__,屏蔽自测资讯 9ebefe87 第 0 条,屏蔽自测,https://example.com/hidden-test/9ebefe87/0,,,2026-10-16 02:04:32.37945
+8f0d0ad6-7a6f-4b92-b935-42a2396b9a9b,chemical,__hidden_test_9ebefe87__,屏蔽自测资讯 9ebefe87 第 1 条,屏蔽自测,https://example.com/hidden-test/9ebefe87/1,,,2026-10-16 02:04:32.379523
+71046f09-d12c-4475-a00c-d62af0d91a89,chemical,__hidden_test_9ebefe87__,屏蔽自测资讯 9ebefe87 第 2 条,屏蔽自测,https://example.com/hidden-test/9ebefe87/2,,,2026-10-16 02:04:32.379579
+(6 rows)

@@ -1,4 +1,6 @@
 """用户认证路由"""
+import hmac
+import os
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -21,6 +23,15 @@ from schemas.user import (
 )
 
 router = APIRouter(prefix="/auth", tags=["认证"])
+
+# ===== 注册准入 =====
+# 默认**关闭**开放自助注册（安全默认）：能连到服务地址的人不再能随手自建账号。
+#   ALLOW_REGISTER=true                        → 完全开放（仅限可信内网自测）
+#   ALLOW_REGISTER=false + 邀请码非空           → 只能凭邀请码注册（默认）
+#   ALLOW_REGISTER=false + 邀请码为空           → 完全关闭，只能由管理员建号
+# 修改后需重启 backend 容器生效（模块导入时读取）。
+ALLOW_REGISTER = os.getenv("ALLOW_REGISTER", "false").strip().lower() in ("1", "true", "yes", "on")
+REGISTER_INVITE_CODE = os.getenv("REGISTER_INVITE_CODE", "").strip()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
 
@@ -108,7 +119,30 @@ async def register(
     user_data: UserCreate,
     db: Session = Depends(get_db)
 ):
-    """用户注册"""
+    """用户注册（受站点准入策略约束）
+
+    默认关闭开放自助注册。关闭时：
+    - 配了 ``REGISTER_INVITE_CODE`` → 必须带对邀请码；
+    - 未配 → 一律拒绝，只能由管理员在库中建号。
+    两种拒绝都返回 403，且不泄漏「邀请码错」与「注册已关闭」以外的信息。
+    """
+    if not ALLOW_REGISTER:
+        if not REGISTER_INVITE_CODE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="本站已关闭自助注册，请联系管理员开通账号",
+            )
+        if not (user_data.invite_code or "").strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="本站需凭邀请码注册，请向管理员索取",
+            )
+        if not hmac.compare_digest(user_data.invite_code.strip(), REGISTER_INVITE_CODE):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="邀请码不正确",
+            )
+
     # 检查用户名是否已存在
     if get_user_by_username(db, user_data.username):
         raise HTTPException(

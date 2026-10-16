@@ -28,7 +28,8 @@ services:
       API_PORT: "8200"
       ENABLE_EMBEDDED_SCHEDULER: "false"
     ports:
-      - "8200:8200"
+      # 只绑回环：外部访问一律走前端容器的 nginx 反代（同源，无 CORS 暴露面）
+      - "127.0.0.1:8200:8200"
     depends_on:
       postgres:
         condition: service_healthy

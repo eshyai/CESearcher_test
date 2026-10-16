@@ -194,9 +194,10 @@ LMA 三层已全部打通：L1 显式反馈 → L1.5 冷启动补漏（自动派
 | 项 | 状态 |
 |----|------|
 | `backend/.env` 是否入库 | ✅ **已忽略**（`.gitignore:21`），Gitee 上只有 `.env.example`，**密钥没泄漏** |
-| `JWT_SECRET_KEY` | ⚠️ 仍是占位符 `your-super-secret-key-change-in-production`（`core/security.py:10` 与 `.env` 双处） |
+| `JWT_SECRET_KEY` | ✅ **已换随机值**（2026-10-16，64 字符，写在 `backend/.env`）。`core/security.py:10` 的占位符仅作兜底默认 |
 | Token 有效期 | 1440 分钟（24h），`JWT_ACCESS_TOKEN_EXPIRE_MINUTES` |
-| `/auth/register` | ⚠️ **开放自助注册**——能访问到内网地址的人都能自己建账号 |
+| `/auth/register` | ✅ **已关闭自助注册**（2026-10-16）——默认 `ALLOW_REGISTER=false` + 邀请码校验；不配邀请码即完全关闭 |
+| 中间件端口 | ✅ **已收敛到回环**（2026-10-16）——PG/Redis/MinIO/Milvus/ES 由 `0.0.0.0` 改 `127.0.0.1`，局域网无法直连数据库（Redis 无密码） |
 | 用户模型 | `User.is_active` + `is_superuser`，**无中间角色层** |
 | 已配置的 Key | `DASHSCOPE_API_KEY`、`BOCHA_API_KEY` |
 | 占位符 Key | `SERPER` / `OPENROUTER` / `DOCMIND_*` / `JUHE_STOCK` / `BID_APP_*` |
@@ -204,10 +205,11 @@ LMA 三层已全部打通：L1 显式反馈 → L1.5 冷启动补漏（自动派
 
 ### 要动什么
 
-1. 换 `JWT_SECRET_KEY`（S，随机串，改部署环境变量）
-2. 注册改**邀请制 / 管理员审批**：加 `ALLOW_SELF_REGISTER` 开关 + `is_superuser` 校验（S，0.5 人日）
-3. HTTPS（运维，反向代理证书）
-4. Key 由部署环境注入而非随仓库分发（S，确认部署方式）
+1. ~~换 `JWT_SECRET_KEY`~~ ✅ **已完成**（随机串写入 `backend/.env`；副作用：所有旧 token 失效，需重新登录）
+2. ~~注册改邀请制~~ ✅ **已完成**——`ALLOW_REGISTER` / `REGISTER_INVITE_CODE` 双变量，默认 `false`；前端注册页已加邀请码输入框。
+   **仍未做**：管理员建号/审批端点（完全关闭注册时只能手工入库建号）
+3. HTTPS（运维，反向代理证书）—— 未做；内网测试阶段可容忍，正式开放前必须补
+4. Key 由部署环境注入而非随仓库分发（S，确认部署方式）—— 未做
 
 ### 成本
 

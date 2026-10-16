@@ -14,6 +14,9 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """用户注册 Schema"""
     password: str = Field(..., min_length=6, max_length=100, description="密码")
+    # 站点关闭自助注册时，凭邀请码注册（env REGISTER_INVITE_CODE）。
+    # 完全开放注册（ALLOW_REGISTER=true）时该字段可省略。
+    invite_code: Optional[str] = Field(None, max_length=64, description="邀请码（可选）")
 
 
 class UserLogin(BaseModel):
