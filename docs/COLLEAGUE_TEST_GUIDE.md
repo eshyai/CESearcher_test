@@ -8,10 +8,10 @@
 
 ```bash
 cd /d/chemical-agent/industry-information-assistant-master
-IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up build
+IMAGE_TAG=v0.18-local-parse WEB_PORT=8080 ./compose.sh prod up build
 ```
 
-> 当前线上标签 = **`v0.17-news-note`**（上一版 `v0.16-model-fix` 仍可回滚）。
+> 当前线上标签 = **`v0.18-local-parse`**（上一版 `v0.17-news-note` 仍可回滚）。
 
 做的事：构建后端 / 前端镜像（代码固化进镜像，不挂源码）→ 起 3 个业务容器
 （`industry_backend` / `industry_worker` / `industry_frontend`）→ 复用已在跑的中间件。
@@ -79,7 +79,7 @@ Remove-NetFirewallRule -DisplayName "chemical-agent-web-8080"
 
 ```bash
 # 编辑 backend/.env：ALLOW_REGISTER=false（REGISTER_INVITE_CODE 保持非空）
-IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
+IMAGE_TAG=v0.18-local-parse WEB_PORT=8080 ./compose.sh prod up -d --force-recreate backend
 ```
 
 此时登录页会自动重新出现邀请码输入框并变为必填。邀请码 = `backend/.env` 的 `REGISTER_INVITE_CODE`。
@@ -91,6 +91,25 @@ IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up -d --force-recreate
 
 ---
 
+## 四点五、知识库（`/knowledge`）
+
+**文档解析默认走本地，不需要配 DocMind**（`KB_PARSER=auto`，本地能解析就本地，否则回退 DocMind）。
+
+| 格式 | 本地能否解析 |
+|---|---|
+| `.txt .md .csv .json .xml .html .pdf .docx .xlsx` | ✅ 能 |
+| `.doc .ppt .pptx .xls`、扫描件 / 图片型 PDF | ❌ 需要 DocMind（当前 AccessKey 未配，会提示需要 OCR） |
+
+解析策略在 `backend/.env` 的 `KB_PARSER` 里切（`auto` / `local` / `docmind`），**改完要重建 backend 容器**。
+
+> ⚠️ **可见性别按字面理解**：「仅自己」= 只有你 + 被你加进来的成员；「部门可见」目前
+> **实际等于所有登录用户只读**（项目还没有部门/组织模型）。**别往里放敏感文件。**
+>
+> ⚠️ 已知限制（尚未修）：删除文档只从列表里移除，**向量索引不会同步清除**，
+> 研究结果里仍可能引用到已删内容；同名文件重传会覆盖旧切片（同一库里两个同名文件会互相覆盖）。
+
+---
+
 ## 五、日常起停与回滚
 
 ```bash
@@ -98,20 +117,20 @@ IMAGE_TAG=v0.17-news-note WEB_PORT=8080 ./compose.sh prod up -d --force-recreate
 ./compose.sh prod logs frontend      # 看 nginx 日志
 ./compose.sh prod logs backend       # 看接口日志
 ./compose.sh prod down               # 停业务容器（中间件保持运行）
-IMAGE_TAG=v0.17-news-note ./compose.sh prod up  # 用同一版本重新拉起
+IMAGE_TAG=v0.18-local-parse ./compose.sh prod up  # 用同一版本重新拉起
 ```
 
 **回滚**：镜像打了标签，换回上一个可用标签即可：
 
 ```bash
-IMAGE_TAG=v0.16-model-fix ./compose.sh prod up
+IMAGE_TAG=v0.17-news-note ./compose.sh prod up
 ```
 
 改代码后要生效**必须重新 build**（prod 不挂源码），**并且换一个新 tag**，
 这样旧 tag 仍是真实可回滚的点：
 
 ```bash
-IMAGE_TAG=v0.18-<新功能名> WEB_PORT=8080 ./compose.sh prod up build
+IMAGE_TAG=v0.19-<新功能名> WEB_PORT=8080 ./compose.sh prod up build
 ```
 
 > 后端与前端是**两个镜像**（`chemical-agent-backend` / `chemical-agent-frontend`），
