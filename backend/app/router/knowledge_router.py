@@ -43,6 +43,10 @@ ALLOWED_EXTENSIONS = {
     '.py', '.js', '.ts', '.json', '.yaml', '.yml', '.xml', '.csv',
 }
 
+# 文档解析策略：auto（默认，本地优先 + DocMind 兜底）| local（只用本地）| docmind（只用 DocMind）
+# 本地解析支持的格式见 service/local_parser_service.py。改这个值需重建容器。
+KB_PARSER_MODE = os.getenv("KB_PARSER", "auto").strip().lower()
+
 
 def get_file_extension(filename: str) -> str:
     """获取文件扩展名"""
@@ -115,10 +119,53 @@ def doc_to_response(doc: Document) -> DocumentResponse:
     )
 
 
-async def process_document(document_id: str, file_path: str, db_session_factory):
-    """后台处理文档（使用 DocMind 解析、向量化、存储到ES/Milvus）"""
-    from service.docmind_service import process_document_with_docmind
+def _parse_and_index(*, file_path: str, file_name: str, index_name: str) -> dict:
+    """选解析器并把内容写进向量库。
 
+    解析策略由 ``KB_PARSER`` 控制（backend/.env，改后需重建容器）：
+        - ``auto``（默认）：本地能解析就本地解析，否则回退 DocMind
+        - ``local``：只用本地解析，DocMind 完全不参与（没有 AccessKey 也能跑）
+        - ``docmind``：只用 DocMind（保持旧行为）
+
+    返回 ``{"success", "message", "document_count"}``，失败原因会写进
+    ``documents.error_message``，用户在文档列表里能直接看到。
+    """
+    from service.docmind_service import process_document_with_docmind
+    from service.kb_ingest_service import index_text_to_milvus
+    from service.local_parser_service import extract_text, supports_local
+
+    mode = KB_PARSER_MODE
+    if mode == "docmind" or (mode == "auto" and not supports_local(file_name)):
+        return process_document_with_docmind(
+            file_path=file_path, file_name=file_name, index_name=index_name
+        )
+
+    text, error = extract_text(file_path, file_name)
+    if text is None:
+        # auto 模式下本地解析不出内容（典型是扫描件 PDF）就再给 DocMind 一次机会
+        if mode == "auto":
+            fallback = process_document_with_docmind(
+                file_path=file_path, file_name=file_name, index_name=index_name
+            )
+            if fallback["success"]:
+                return fallback
+            return {
+                "success": False,
+                "message": f"{error}；DocMind 回退也失败：{fallback['message']}",
+                "document_count": 0,
+            }
+        return {"success": False, "message": error, "document_count": 0}
+
+    return index_text_to_milvus(text, file_name, index_name)
+
+
+def process_document(document_id: str, file_path: str, db_session_factory):
+    """后台处理文档：解析 → 切片 → 向量化 → 写入 Milvus。
+
+    ⚠️ 必须保持**同步 def**：内部全是阻塞调用（文件解析、embedding HTTP、Milvus 写入，
+    以及 DocMind 那条 ``time.sleep`` 轮询最长 300s）。写成 ``async def`` 的话 FastAPI 会
+    把它放在事件循环里执行，处理一个文档期间整个 API 都会卡住。
+    """
     # 创建新的数据库会话
     db = db_session_factory()
     try:
@@ -145,8 +192,7 @@ async def process_document(document_id: str, file_path: str, db_session_factory)
                 return
             index_name = kb_collection_name(kb)
 
-            # 使用 DocMind 处理文档
-            result = process_document_with_docmind(
+            result = _parse_and_index(
                 file_path=file_path,
                 file_name=doc.filename,
                 index_name=index_name,

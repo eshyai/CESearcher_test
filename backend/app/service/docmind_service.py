@@ -1,15 +1,13 @@
 """DocMind 文档智能解析服务"""
 import os
 import time
-import hashlib
 from typing import List, Dict, Any, Optional
 from alibabacloud_docmind_api20220711.client import Client as DocMindClient
 from alibabacloud_docmind_api20220711 import models as docmind_models
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_tea_util import models as util_models
 
-from service.embedding_service import generate_embedding
-from service.milvus_service import get_milvus_service
+from service.kb_ingest_service import chunk_text, index_text_to_milvus
 
 
 class DocMindService:
@@ -201,45 +199,6 @@ class DocMindService:
         return all_text
 
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    将文本切分成块
-
-    Args:
-        text: 原始文本
-        chunk_size: 每块大小
-        overlap: 重叠大小
-
-    Returns:
-        文本块列表
-    """
-    if not text:
-        return []
-
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
-
-        # 尝试在句子边界切分
-        if end < len(text):
-            for sep in ['。', '！', '？', '.', '!', '?', '\n']:
-                last_sep = chunk.rfind(sep)
-                if last_sep > chunk_size // 2:
-                    chunk = chunk[:last_sep + 1]
-                    end = start + last_sep + 1
-                    break
-
-        if chunk.strip():
-            chunks.append(chunk.strip())
-
-        start = end - overlap
-
-    return chunks
-
-
 def process_document_with_docmind(
     file_path: str,
     file_name: str,
@@ -293,59 +252,17 @@ def process_document_with_docmind(
 
         print(f"解析到文本长度: {len(text)}")
 
-        # 4. 文本切分
-        chunks = chunk_text(text, chunk_size=chunk_size)
-
-        if not chunks:
-            result["message"] = "文档切分失败"
+        # 4~7. 切分 → 向量化 → 写入 Milvus
+        # 与本地解析路径共用 service/kb_ingest_service，避免两份写库实现漂移
+        indexed = index_text_to_milvus(text, file_name, index_name, chunk_size=chunk_size)
+        if not indexed["success"]:
+            result["message"] = indexed["message"]
             print(result["message"])
             return result
-
-        print(f"文档切分完成，共 {len(chunks)} 个切片")
-
-        # 5. 生成向量嵌入
-        print("开始生成向量嵌入...")
-        embeddings = generate_embedding(chunks)
-
-        if not embeddings:
-            result["message"] = "向量生成失败: 返回为空"
-            print(result["message"])
-            return result
-
-        if len(embeddings) != len(chunks):
-            result["message"] = f"向量生成失败: 数量不匹配 ({len(embeddings)} vs {len(chunks)})"
-            print(result["message"])
-            return result
-
-        print(f"向量生成完成，维度: {len(embeddings[0])}")
-
-        # 6. 构建 Milvus 文档
-        doc_id = hashlib.md5(file_name.encode()).hexdigest()
-        documents = []
-
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk_id = hashlib.md5(f"{file_name}_{i}_{chunk[:50]}".encode()).hexdigest()
-
-            doc = {
-                "id": chunk_id,
-                "doc_id": doc_id,
-                "kb_id": index_name,
-                "filename": file_name,
-                "content": chunk,
-                "chunk_index": i,
-                "vector": embedding,
-            }
-            documents.append(doc)
-
-        # 7. 插入 Milvus
-        print(f"开始插入 Milvus，集合: {index_name}")
-        milvus = get_milvus_service()
-        milvus.insert_documents(index_name, documents)
 
         result["success"] = True
-        result["message"] = f"成功处理 {len(documents)} 个切片"
-        result["document_count"] = len(documents)
-
+        result["message"] = indexed["message"]
+        result["document_count"] = indexed["document_count"]
         print(f"文档处理完成: {result['message']}")
 
     except Exception as e:
