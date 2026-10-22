@@ -228,7 +228,13 @@ export default function NewsPage() {
     <div
       key={item.id}
       className={styles['news-item']}
-      onClick={() => openLink(item.source_url)}
+      onClick={(e) => {
+        // 整个卡片可点开原文。但 Popover 内容是用 Portal 渲染到 body 的：DOM 上不在卡片里，
+        // React 合成事件却仍会沿「组件树」冒泡到卡片（这是 createPortal 的既定行为），
+        // 结果点备注框里的输入框会把原文开出来。用 currentTarget.contains 判定真实 DOM 归属。
+        if (!e.currentTarget.contains(e.target as Node)) return
+        openLink(item.source_url)
+      }}
     >
       <div className={styles['news-title']}>{item.title}</div>
       {showScore && item.score !== undefined && (
@@ -328,7 +334,9 @@ export default function NewsPage() {
               open={noteEditingId === item.id}
               onOpenChange={(open) => handleNoteOpenChange(open, item)}
               content={
-                <div className={styles['note-editor']}>
+                // stopPropagation 双保险：即使哪天卡片那边的判断被改掉，
+                // 点备注框也不会通过 Portal 冒泡触发卡片的「打开原文」
+                <div className={styles['note-editor']} onClick={(e) => e.stopPropagation()}>
                   <div className={styles['note-editor-tip']}>
                     备注只有你自己可见，会用于优化你的推荐
                   </div>
