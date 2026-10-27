@@ -1,8 +1,6 @@
-import IconBid from '@/assets/layout/bid.svg'
 import IconHistory from '@/assets/layout/history.svg'
 import IconHome from '@/assets/layout/home.svg'
 import IconKnowledge from '@/assets/layout/knowledge.svg'
-import IconMemory from '@/assets/layout/memory.svg'
 import IconDatabase from '@/assets/layout/database.svg'
 import IconNewChat from '@/assets/layout/newchat.svg'
 import IconNews from '@/assets/layout/news.svg'
@@ -66,12 +64,6 @@ export function Nav() {
         onClick: () => setSessionDrawerOpen(true),
       },
       {
-        key: 'memory',
-        label: '记忆库',
-        icon: IconMemory,
-        href: '/memory',
-      },
-      {
         key: 'knowledge',
         label: '知识库',
         icon: IconKnowledge,
@@ -94,12 +86,6 @@ export function Nav() {
         label: '我的关注',
         icon: IconStar,
         href: '/topics',
-      },
-      {
-        key: 'bid',
-        label: '招投标信息',
-        icon: IconBid,
-        href: '/bidding',
       },
       // 暂时隐藏职业规划
       // {

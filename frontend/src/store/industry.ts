@@ -15,8 +15,6 @@ export interface IndustryConfig {
   description: string
   // 资讯搜索关键词
   newsKeywords: string[]
-  // 招投标搜索关键词
-  biddingKeywords: string[]
   // 研究相关关键词
   researchKeywords: string[]
 }
@@ -37,7 +35,6 @@ export const INDUSTRY_CONFIGS: IndustryConfig[] = [
       '化工 安全事故',
       '双碳 化工',
     ],
-    biddingKeywords: ['化工', '危化品', '石化工程', '化工园区', '化工设备', '环保治理'],
     researchKeywords: ['化工', '石化', '危化品', '化工品价格'],
   },
 ]

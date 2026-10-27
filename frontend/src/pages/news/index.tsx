@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Card,
   Button,
@@ -32,7 +32,7 @@ import {
 import { useSnapshot } from 'valtio'
 import { authState } from '@/store/auth'
 import { industryState, getCurrentIndustry } from '@/store/industry'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import * as api from '@/api'
 import type { NewsItem, NewsStats } from '@/api/news'
 import styles from './index.module.scss'
@@ -204,6 +204,21 @@ export default function NewsPage() {
     setSearchResults([])
     setSearchMeta(null)
   }
+
+  // 首页检索入口会带 ?q=xxx 跳进来：这里自动发起一次检索，并把参数从地址栏清掉
+  // （清掉是为了刷新 / 后退时不再重复触发，也避免和「返回列表」的行为打架）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const bootQueryRef = useRef<string | null>(null)
+  useEffect(() => {
+    const q = searchParams.get('q')?.trim()
+    if (!q || bootQueryRef.current === q) return
+    bootQueryRef.current = q
+    setSearchInput(q)
+    doSearch(q)
+    const next = new URLSearchParams(searchParams)
+    next.delete('q')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams, doSearch])
 
   // 格式化时间
   const formatTime = (timeStr: string) => {

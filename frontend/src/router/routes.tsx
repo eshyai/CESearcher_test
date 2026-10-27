@@ -6,11 +6,9 @@ import Chat from '@/pages/chat'
 import NewChat from '@/pages/chat/newchat'
 import Index from '@/pages/index'
 import KnowledgePage from '@/pages/knowledge'
-import MemoryPage from '@/pages/memory'
 import DatabasePage from '@/pages/database'
 import NewsPage from '@/pages/news'
 import TopicsPage from '@/pages/topics'
-import BiddingPage from '@/pages/bidding'
 import {
   Navigate,
   Outlet,
@@ -49,10 +47,6 @@ export const routes: IRouteObject[] = [
     Component: KnowledgePage,
   },
   {
-    path: '/memory',
-    Component: MemoryPage,
-  },
-  {
     path: '/database',
     Component: DatabasePage,
   },
@@ -64,9 +58,14 @@ export const routes: IRouteObject[] = [
     path: '/topics',
     Component: TopicsPage,
   },
+  // 已下线页面：旧书签 / 旧链接直接回到资讯主入口，不抛 404
+  {
+    path: '/memory',
+    element: <Navigate to="/news" replace />,
+  },
   {
     path: '/bidding',
-    Component: BiddingPage,
+    element: <Navigate to="/news" replace />,
   },
   {
     path: '/404',
