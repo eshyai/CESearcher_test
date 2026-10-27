@@ -1,7 +1,7 @@
 # 交接文档 —— 下一个会话从这里开始
 
-> **最后更新**：2026-10-27 14:20
-> **代码基线**：`ff92875`（main，与 origin 一致，工作区干净）
+> **最后更新**：2026-10-27 14:40（§11 快照按 Docker 重启后实测重校）
+> **代码基线**：`ff92875` + 本文档提交 `9915045`（main，与 origin 一致，工作区干净）
 > **线上镜像标签**：`v0.20-certifi`（可回滚到 v0.19 / v0.18 / v0.17）
 > **仓库**：Gitee `yuechuyusheng/chemical_agent`，分支 `main`，约定**改动即时 commit + push**
 
@@ -36,16 +36,22 @@ nohup "C:/Users/TJL20051126/AppData/Local/Programs/DockerDesktop/Docker Desktop.
 # 探测：不要用 ls //./pipe/...（Git Bash 会挂死）
 docker info --format '{{.ServerVersion}}'
 
-# 2) 看容器（正常应有 3 业务 + 6 中间件）
+# 2) 看容器（正常应有 3 业务 + 6 中间件 = 9 个；Docker 一启动会自动恢复，不用手动 up）
 docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}"
 
-# 3) 冒烟三连（都应为 200）
+# 3) 冒烟四连（200 / 200 / 200 / 404）
+curl -s --noproxy '*' -m 8 http://127.0.0.1:8200/hello          # 后端健康检查（唯一存活探针，别用 /health，它不存在）
 curl -s --noproxy '*' -m 8 http://127.0.0.1:8080/auth/registration-policy; echo
 curl -s --noproxy '*' -m 20 -o /dev/null -w 'news/list http=%{http_code}\n' \
   "http://127.0.0.1:8080/news/list?industry_id=chemical&limit=1"
 curl -s --noproxy '*' -m 8 -o /dev/null -w 'backend/docs http=%{http_code}（应为 404）\n' http://127.0.0.1:8200/docs
 
-# 4) 代码基线
+# 4) 检索链路（库内，约 2s；能出 5 条带 score 的即 Milvus+rerank 正常）
+curl -s --noproxy '*' -m 90 -X POST http://127.0.0.1:8080/news/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"己内酰胺 价格","industry_id":"chemical","limit":5,"include_online":false}'
+
+# 5) 代码基线
 git status --short        # 应为空
 git log --oneline -5
 ```
@@ -247,6 +253,14 @@ compose 用 `env_file:` 整体注入，**没有**在 compose 里硬编码任何 
     提交信息写 `.git/COMMIT_MSG_TMP` 再 `git commit -F`。
 15. **改长文档前先 `git diff --stat <doc>` 确认基线 == HEAD**。`KB_COLLAB_AND_LMA_DESIGN.md`
     已连续两次出现「磁盘被回退、HEAD 反而更新」→ 先 `git checkout HEAD -- <doc>` 再叠加。
+16. **`MSYS_NO_PATHCONV=1` 下 `curl -o /d/tmp/x` 不会转成 Windows 路径** → 文件落到了
+    `D:\d\tmp\x`（不存在则 curl 静默失败、后续 json.load 报 FileNotFound）。**输出文件一律写
+    `-o "D:/tmp/x"` 这种带盘符的形式**。
+17. **后端没有 `/health`，唯一存活探针是 `GET /hello`**。`/health`、`/` 都返回 404，
+    别误判成服务挂了。
+18. **`docker ps` / `psql` 在 Docker 刚启动那 1~2 分钟内可能被 SIGTERM 打断**（引擎还在做
+    健康检查、命令阻塞超过 120s）。症状是输出到一半就断、Exit Code 143。**等一会儿重试即可**，
+    不是真故障。
 
 ---
 
@@ -351,16 +365,22 @@ docker exec industry_postgres psql -U postgres -d industry_assistant -c "select 
 
 ---
 
-## 11. 交接时的环境快照（2026-10-27 14:20）
+## 11. 交接时的环境快照（2026-10-27 14:40，全部实测）
 
 | 项 | 状态 |
 |---|---|
-| git | `ff92875`，工作区干净，与 origin/main 一致 |
-| Docker | 交接时引擎为 **29.8.1**，已就绪 |
-| 容器 | **9 个全部 Up**（3 业务 + 6 中间件），镜像均为 `v0.20-certifi`；Docker 重启后**自动恢复**（业务 `restart: always`、中间件 `unless-stopped`） |
-| 冒烟实测 | `/auth/registration-policy` **200**、`/news/list` **200**、`127.0.0.1:8200/docs` **404** ✅ |
-| 数据 | `industry_news` **236 条，`extraction_status` 全部 `completed`**；知识库 **1 个**、文档 **0 个** |
+| git | `9915045`（本文档提交），工作区干净，与 origin/main 一致 |
+| Docker | 引擎 **29.8.1**，内核 `6.18.54.1-microsoft-standard-WSL2`，已就绪 |
+| 容器 | **9 个全部 Up / 全部 healthy**，业务与中间件镜像均为 `v0.20-certifi`；**Docker 一启动即自动恢复**（业务 `restart: always`、中间件 `unless-stopped`），不用手动 `up` |
+| 冒烟实测 | `/hello` **200**、`/auth/registration-policy` **200**、`/news/list` **200**、`8200/docs` **404** ✅ |
+| 容器内组件 | Python **3.13.17** / pip **26.2.2** / certifi **2026.10.19** / OpenSSL **3.5.7** |
+| 检索链路 | 库内检索 `己内酰胺 价格` → **2.0s**，`mode=rerank`，返回 5 条带 score（0.87/0.65/0.61）→ Milvus + rerank 正常 |
+| 数据 | `industry_news` **236 条，`extraction_status` 全部 `completed`**；知识库 **1 个**、文档 **0 个**；`users` 2 / `focus_topics` 2 / `news_feedback` 2 / `news_hidden` 0 |
+| Milvus 集合 | 3 个：`news_chemical`（在用）、`news_energy`、`news_smart_transportation`（**行业已只保留 chemical，后两个是遗留集合，可清理**） |
 | Node | PATH 版 **22.23.4** / npm 10.9.9（已修 10-21 安全发布）；`C:\node.js` 仍 24.19.0（待管理员升级） |
-| Python | 本机 **3.13.17** / pip 26.2.2；容器内同为 3.13.17 / certifi 2026.10.19 |
+| Python（本机） | **3.13.17** / pip 26.2.2；两个 venv 跟随 base |
 | 注册策略 | **开放注册**（`ALLOW_REGISTER=true`，邀请码字段自动隐藏） |
-| 记忆文件 | `MEMORY.md` 18.5KB（接近注入上限，**再加内容前先压缩或拆到 details**） |
+| 记忆文件 | `MEMORY.md` 18.6KB（接近注入上限，**再加内容前先压缩或拆到 details**） |
+
+> 注：`/health` **不存在**，后端唯一存活探针是 **`GET /hello`**（返回 `{"status":"success",...}`）。
+> 我第一版文档写的 `/health` 是错的，已更正 —— 排障时别再试 `/health`。
