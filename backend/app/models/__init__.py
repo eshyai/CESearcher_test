@@ -4,6 +4,7 @@ from .knowledge import KnowledgeBase, Document, KnowledgeBaseMember, KnowledgeAu
 from .industry_data import IndustryStats, CompanyData, PolicyData
 from .research import ResearchCheckpoint
 from .news import IndustryNews, BiddingInfo, NewsCollectionTask, FocusTopic, NewsFeedback, NewsHidden
+from .news_library import NewsLibraryItem, NewsAnnotation
 
 __all__ = [
     "User",
@@ -25,4 +26,6 @@ __all__ = [
     "FocusTopic",
     "NewsFeedback",
     "NewsHidden",
+    "NewsLibraryItem",
+    "NewsAnnotation",
 ]

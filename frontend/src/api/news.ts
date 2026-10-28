@@ -359,3 +359,124 @@ export const rollbackRevision = async (
   const res = await request.post(`/intelligence/revisions/${revisionId}/rollback`)
   return res.data
 }
+
+// ============================================================
+// 共享资讯库（收录池 + 批注）
+// 边界：资讯原文只读，所有协作都落在批注上；下架是软删（status=archived），可再收录恢复。
+// ============================================================
+
+export interface LibraryNewsItem {
+  id: string
+  title: string
+  summary?: string | null
+  content?: string
+  source?: string | null
+  source_url?: string | null
+  category?: string | null
+  publish_time?: string | null
+  collected_at?: string | null
+  event_type?: string | null
+  extracted_topics?: Array<{ type: string; name: string }>
+  entities?: string[]
+  /** active=在库里；archived=已下架；null=这条还没被收录（从 /news 直接看详情时） */
+  status?: 'active' | 'archived' | null
+  added_by_name?: string | null
+  added_at?: string | null
+  annotation_count?: number
+}
+
+export interface NewsAnnotationItem {
+  id: string
+  news_id: string
+  user_id?: string | null
+  username?: string | null
+  content: string
+  created_at?: string | null
+  updated_at?: string | null
+  /** 当前登录用户是否是作者（只有作者能改/删） */
+  mine: boolean
+}
+
+export interface LibraryNewsDetail extends LibraryNewsItem {
+  annotations: NewsAnnotationItem[]
+}
+
+export const getLibraryItems = async (params?: {
+  status?: 'active' | 'archived'
+  keyword?: string
+  limit?: number
+  offset?: number
+}): Promise<{ success: boolean; data: LibraryNewsItem[]; total: number }> => {
+  const res = await request.get<{ success: boolean; data: LibraryNewsItem[]; total: number }>(
+    '/news/library',
+    { params, loading: false },
+  )
+  return res.data
+}
+
+/** 收录到共享库；幂等（已收录返回 created=false，已下架的会恢复上架） */
+export const addToLibrary = async (
+  newsId: string,
+): Promise<{ success: boolean; created: boolean; data: LibraryNewsDetail }> => {
+  const res = await request.post<{ success: boolean; created: boolean; data: LibraryNewsDetail }>(
+    '/news/library',
+    { news_id: newsId },
+    { loading: false },
+  )
+  return res.data
+}
+
+/** 下架（软删，所有人可见性移除，可再收录恢复） */
+export const archiveLibraryItem = async (
+  newsId: string,
+): Promise<{ success: boolean; status: 'archived' | 'absent' }> => {
+  const res = await request.delete<{ success: boolean; status: 'archived' | 'absent' }>(
+    `/news/library/${newsId}`,
+    { loading: false },
+  )
+  return res.data
+}
+
+export const getLibraryDetail = async (
+  newsId: string,
+): Promise<{ success: boolean; data: LibraryNewsDetail }> => {
+  const res = await request.get<{ success: boolean; data: LibraryNewsDetail }>(
+    `/news/library/${newsId}`,
+    { loading: false },
+  )
+  return res.data
+}
+
+export const addNewsAnnotation = async (
+  newsId: string,
+  content: string,
+): Promise<{ success: boolean; data: NewsAnnotationItem }> => {
+  const res = await request.post<{ success: boolean; data: NewsAnnotationItem }>(
+    `/news/library/${newsId}/annotations`,
+    { content },
+    { loading: false },
+  )
+  return res.data
+}
+
+export const updateNewsAnnotation = async (
+  annotationId: string,
+  content: string,
+): Promise<{ success: boolean; data: NewsAnnotationItem }> => {
+  const res = await request.put<{ success: boolean; data: NewsAnnotationItem }>(
+    `/news/annotations/${annotationId}`,
+    { content },
+    { loading: false },
+  )
+  return res.data
+}
+
+export const deleteNewsAnnotation = async (
+  annotationId: string,
+): Promise<{ success: boolean }> => {
+  const res = await request.delete<{ success: boolean }>(
+    `/news/annotations/${annotationId}`,
+    { loading: false },
+  )
+  return res.data
+}

@@ -20,6 +20,7 @@ from router.attachment_router import router as attachment_router
 from router.memory_router import router as memory_router
 from router.database_router import router as database_router
 from router.news_router import router as news_router
+from router.news_library_router import router as news_library_router
 from router.feedback_router import router as feedback_router
 from core.database import engine, Base
 # 导入所有模型以确保它们被注册
@@ -100,6 +101,8 @@ app.include_router(document_router)
 app.include_router(search_router)
 app.include_router(chat_router)
 app.include_router(research_router)
+# 共享资讯库须在 news_router 之前注册：/news/library 不能被 /news/{news_id} 之类模式先吃掉
+app.include_router(news_library_router)
 app.include_router(news_router)
 app.include_router(feedback_router)
 

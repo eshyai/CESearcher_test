@@ -1,6 +1,7 @@
 import IconHistory from '@/assets/layout/history.svg'
 import IconHome from '@/assets/layout/home.svg'
 import IconKnowledge from '@/assets/layout/knowledge.svg'
+import IconMessage from '@/assets/layout/message.svg'
 import IconDatabase from '@/assets/layout/database.svg'
 import IconNewChat from '@/assets/layout/newchat.svg'
 import IconNews from '@/assets/layout/news.svg'
@@ -80,6 +81,12 @@ export function Nav() {
         label: '行业资讯',
         icon: IconNews,
         href: '/news',
+      },
+      {
+        key: 'library',
+        label: '共享资讯库',
+        icon: IconMessage,
+        href: '/library',
       },
       {
         key: 'topics',

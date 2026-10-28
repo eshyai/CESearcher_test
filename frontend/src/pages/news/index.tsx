@@ -28,6 +28,7 @@ import {
   EyeInvisibleOutlined,
   UndoOutlined,
   EditOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import { useSnapshot } from 'valtio'
 import { authState } from '@/store/auth'
@@ -97,6 +98,10 @@ export default function NewsPage() {
   const [hiddenList, setHiddenList] = useState<NewsItem[]>([])
   const [hiddenLoading, setHiddenLoading] = useState(false)
   const [hidingId, setHidingId] = useState<string | null>(null)
+
+  // 共享资讯库：本次会话里已收录的资讯（后端幂等，重复点也安全）
+  const [libraryIds, setLibraryIds] = useState<Set<string>>(new Set())
+  const [librarySavingId, setLibrarySavingId] = useState<string | null>(null)
 
   // 备注（news_feedback.note）：只有自己可见，会作为 L2a 偏好归纳的输入
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null)
@@ -400,6 +405,32 @@ export default function NewsPage() {
               </Button>
             </Popover>
           )}
+          {/* 收录到共享资讯库：所有人可见、可批注；原文只读（协作发生在 /library 的批注里） */}
+          {item.id && (
+            libraryIds.has(item.id) ? (
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                icon={<BookOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  navigate(`/library?news=${item.id}`)
+                }}
+              >
+                已在共享库
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={<BookOutlined />}
+                loading={librarySavingId === item.id}
+                onClick={(e) => handleAddToLibrary(e, item)}
+              >
+                收录
+              </Button>
+            )
+          )}
           {/* 个人屏蔽：只让自己看不到，不删除共享库、不影响他人（可随时恢复） */}
           {item.id && (
             <Button
@@ -538,6 +569,22 @@ export default function NewsPage() {
       message.error(error?.response?.data?.detail || '屏蔽失败')
     } finally {
       setHidingId(null)
+    }
+  }
+
+  // 收录到共享资讯库：所有人可见、可批注；原文只读，下架是软删
+  const handleAddToLibrary = async (event: React.MouseEvent, item: NewsItem) => {
+    event.stopPropagation()
+    if (!item.id) return
+    setLibrarySavingId(item.id)
+    try {
+      const res = await api.news.addToLibrary(item.id)
+      setLibraryIds((prev) => new Set(prev).add(item.id as string))
+      message.success(res.created ? '已收录到共享资讯库' : '这条已经在共享库里了')
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '收录失败')
+    } finally {
+      setLibrarySavingId(null)
     }
   }
 

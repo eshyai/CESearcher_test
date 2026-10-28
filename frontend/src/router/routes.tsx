@@ -7,6 +7,7 @@ import NewChat from '@/pages/chat/newchat'
 import Index from '@/pages/index'
 import KnowledgePage from '@/pages/knowledge'
 import DatabasePage from '@/pages/database'
+import LibraryPage from '@/pages/library'
 import NewsPage from '@/pages/news'
 import TopicsPage from '@/pages/topics'
 import {
@@ -53,6 +54,10 @@ export const routes: IRouteObject[] = [
   {
     path: '/news',
     Component: NewsPage,
+  },
+  {
+    path: '/library',
+    Component: LibraryPage,
   },
   {
     path: '/topics',
