@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Input, Tag, Tooltip } from 'antd'
+import { Input, Tag, Tooltip, Button } from 'antd'
 import { ArrowRightOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import * as api from '@/api'
@@ -50,7 +50,7 @@ export default function Index() {
     let alive = true
     ;(async () => {
       try {
-        const list = await api.news.getFocusTopics()
+        const list = await api.news.getFocusTopics(undefined, { silent: true })
         if (!alive) return
         setTopics((list || []).filter((t) => t.is_active).slice(0, 8))
       } catch (e) {
@@ -89,16 +89,21 @@ export default function Index() {
           就能拿到库里已有和全网最新的相关报道。
         </p>
 
-        <div className={styles['hero__search']}>
-          <Input.Search
+        {/* 检索框自己拼 Input + Button：antd 的 Input.Search(enterButton) 高度由内层 affix-wrapper
+            决定，内层 input 与按钮各自设高会出现「按钮比输入框高、占位符偏下」，这里用 flex 容器统一 */}
+        <div className={styles['search-box']}>
+          <Input
+            variant="borderless"
             size="large"
             allowClear
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            onSearch={(value) => goSearch(value)}
-            enterButton="检索"
+            onPressEnter={() => goSearch()}
             placeholder="公司 / 产品 / 工艺 / 政策片段…"
           />
+          <Button autoInsertSpace={false} onClick={() => goSearch()}>
+            检索
+          </Button>
         </div>
 
         <div className={styles['hero__examples']}>

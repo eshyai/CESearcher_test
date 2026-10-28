@@ -193,12 +193,17 @@ export interface FocusTopic {
   weak_hits?: number
 }
 
-export const getFocusTopics = async (params?: {
-  source?: 'manual' | 'auto'
-  include_inactive?: boolean
-}): Promise<FocusTopic[]> => {
+export const getFocusTopics = async (
+  params?: {
+    source?: 'manual' | 'auto'
+    include_inactive?: boolean
+  },
+  options?: { silent?: boolean },
+): Promise<FocusTopic[]> => {
+  // silent：失败不弹全局 toast。首页只是拿它当快捷检索词，拉不到应静默降级而不是报错打扰用户
   const res = await request.get<FocusTopic[]>('/intelligence/topics', {
     loading: false,
+    errorToast: !options?.silent,
     params,
   })
   return res.data

@@ -57,40 +57,6 @@ $border: #ececec;
     line-height: 1.78;
   }
 
-  &__search {
-    margin-top: 28px;
-    max-width: 660px;
-
-    :global {
-      .ant-input-search .ant-input {
-        height: 52px;
-        padding-left: 18px;
-        border-radius: 12px 0 0 12px;
-        border-color: #e3e3e3;
-        font-size: 15px;
-      }
-
-      .ant-input-search .ant-input:focus,
-      .ant-input-search .ant-input:hover {
-        border-color: $accent;
-      }
-
-      .ant-input-search .ant-input-group-addon .ant-btn {
-        height: 52px;
-        padding: 0 26px;
-        border-radius: 0 12px 12px 0;
-        border-color: $accent;
-        background: $accent;
-        font-size: 15px;
-      }
-
-      .ant-input-search .ant-input-group-addon .ant-btn:hover {
-        border-color: #96430a;
-        background: #96430a;
-      }
-    }
-  }
-
   &__examples {
     display: flex;
     flex-wrap: wrap;
@@ -118,6 +84,78 @@ $border: #ececec;
   &:hover {
     background: $accent-soft;
     color: $accent;
+  }
+}
+
+/* ---------- 检索框 ---------- */
+/* 高度只由容器决定（52px），输入区与按钮都填满容器 → 两者永远等高 */
+.search-box {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  max-width: 660px;
+  height: 52px;
+  margin-top: 28px;
+  overflow: hidden;
+  border: 1px solid #e3e3e3;
+  border-radius: 12px;
+  background: #fff;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease;
+
+  &:focus-within {
+    border-color: $accent;
+  }
+
+  :global {
+    /* allowClear 会把 input 包进 affix-wrapper：让 wrapper 撑满容器并垂直居中 */
+    .ant-input-affix-wrapper {
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      height: 100%;
+      padding: 0 10px 0 18px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .ant-input-affix-wrapper .ant-input {
+      height: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .ant-input-affix-wrapper .ant-input::placeholder {
+      color: #b9bdc4;
+    }
+
+    /* 双写 .ant-btn 抬高一级优先级，压过 antd 的 .ant-btn-default:hover（运行时注入，顺序不可控） */
+    .ant-btn.ant-btn {
+      flex: 0 0 auto;
+      height: 100%;
+      padding: 0 26px;
+      border: 0;
+      border-radius: 0;
+      background: $accent;
+      color: #fff;
+      font-size: 15px;
+      box-shadow: none;
+      cursor: pointer;
+
+      &:hover,
+      &:focus,
+      &:active {
+        border: 0;
+        background: #96430a;
+        color: #fff;
+        box-shadow: none;
+      }
+    }
   }
 }
 
