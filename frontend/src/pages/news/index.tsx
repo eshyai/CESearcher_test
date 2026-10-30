@@ -61,16 +61,23 @@ const EVENT_TYPE_OPTIONS = [
 ]
 
 // 事件类型标签配色
+//
+// 只用三族色，不再一类型一色（原来 10 个色 → 列表里像色卡，视觉噪音大）：
+//   紫族  = 扩张 / 资本 / 技术（purple / magenta）
+//   红族  = 风险（red）
+//   中性  = 事务性内容（default）
+// 具体是什么类型靠标签文字区分，颜色只表达"类别族"。刻意避开 green / blue / cyan，
+// 它们和主色 #991D85 摆在一起会互相抢。
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  投产扩产: 'green',
-  停产检修: 'volcano',
-  价格变动: 'gold',
-  政策发布: 'blue',
+  投产扩产: 'purple',
+  停产检修: 'magenta',
+  价格变动: 'magenta',
+  政策发布: 'default',
   安全事故: 'red',
-  环保处罚: 'magenta',
+  环保处罚: 'red',
   并购融资: 'purple',
-  技术突破: 'cyan',
-  招投标: 'geekblue',
+  技术突破: 'purple',
+  招投标: 'default',
   其他: 'default',
 }
 
@@ -261,7 +268,7 @@ export default function NewsPage() {
       <div className={styles['news-title']}>{item.title}</div>
       {showScore && item.score !== undefined && (
         <div className={styles['news-tags']}>
-          <Tag color="green">相关度 {item.score.toFixed(3)}</Tag>
+          <Tag bordered={false}>相关度 {item.score.toFixed(3)}</Tag>
           {item.source_type === 'web' ? (
             <Tag color="cyan">全网</Tag>
           ) : item.source_type === 'library' ? (
@@ -305,13 +312,13 @@ export default function NewsPage() {
         </span>
         <Tag
           color={
-            item.category === '政策' ? 'blue' : item.category === '研报' ? 'purple' : 'default'
+            item.category === '政策' ? 'purple' : item.category === '研报' ? 'magenta' : 'default'
           }
         >
           {item.category || '新闻'}
         </Tag>
         {item.matched_topics?.map((topic) => (
-          <Tag color="geekblue" key={topic}>
+          <Tag bordered={false} key={topic}>
             {topic}
           </Tag>
         ))}
@@ -706,14 +713,14 @@ export default function NewsPage() {
             <span>
               关键词「<strong>{searchQuery}</strong>」找到 <strong>{searchResults.length}</strong> 条相关报道
             </span>
-            <Tag color={searchMeta.mode === 'rerank' ? 'green' : 'blue'}>
+            <Tag bordered={false}>
               {searchMeta.mode === 'rerank'
                 ? '语义 + 关键词重排'
                 : searchMeta.mode === 'hybrid'
                 ? '混合检索'
                 : '关键词检索'}
             </Tag>
-            {!searchMeta.vectorIndexed && <Tag color="orange">向量索引未就绪，已降级为关键词</Tag>}
+            {!searchMeta.vectorIndexed && <Tag color="red">向量索引未就绪，已降级为关键词</Tag>}
             {searchMeta.foreignFiltered > 0 && (
               <Tag bordered={false}>已过滤外文 {searchMeta.foreignFiltered} 条</Tag>
             )}

@@ -26,6 +26,18 @@
 
   .tip {
     margin-bottom: 16px;
+
+    // 「AI 如何自我成长」是说明性内容，不该用 antd 默认的蓝色 info 底（与主色 #991D85 抢注意力）。
+    // 改成中性浅底 + 主色图标：信息层级不变，颜色回到同一族。
+    // 用 .tip.ant-alert-info 双类提高优先级，否则会被 antd 的 .ant-alert-info 覆盖。
+    &:global(.ant-alert-info) {
+      background: #faf9fb;
+      border-color: #eeebf0;
+    }
+
+    :global(.ant-alert-icon) {
+      color: var(--ant-color-primary);
+    }
   }
 
   .induction-card {

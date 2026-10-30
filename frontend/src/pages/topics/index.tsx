@@ -66,11 +66,11 @@ const SUGGESTION_META: Record<
   SuggestionKind,
   { label: string; color: string; accept: string; soon: string }
 > = {
-  add: { label: '新增关注', color: 'green', accept: '采纳并新增', soon: '新增中' },
-  adjust: { label: '调整权重', color: 'blue', accept: '采纳调整', soon: '调整中' },
+  add: { label: '新增关注', color: 'purple', accept: '采纳并新增', soon: '新增中' },
+  adjust: { label: '调整权重', color: 'default', accept: '采纳调整', soon: '调整中' },
   merge: { label: '合并同义', color: 'purple', accept: '采纳合并', soon: '合并中' },
-  drop: { label: '建议停用', color: 'volcano', accept: '采纳停用', soon: '停用中' },
-  insight: { label: '画像结论', color: 'gold', accept: '知道了', soon: '处理中' },
+  drop: { label: '建议停用', color: 'red', accept: '采纳停用', soon: '停用中' },
+  insight: { label: '画像结论', color: 'magenta', accept: '知道了', soon: '处理中' },
 }
 
 type SourceFilter = 'all' | 'manual' | 'auto'
@@ -339,7 +339,7 @@ export default function TopicsPage() {
             {record.name}
             {(record.source || 'manual') === 'auto' && (
               <Tooltip title="系统根据你对资讯的反馈自动派生。确认后即为正式关注主题，权重与匹配词都可编辑。">
-                <Tag className={styles['auto-tag']} color="orange" icon={<ThunderboltOutlined />}>
+                <Tag className={styles['auto-tag']} color="purple" icon={<ThunderboltOutlined />}>
                   自动派生
                 </Tag>
               </Tooltip>
@@ -365,7 +365,7 @@ export default function TopicsPage() {
       width: 100,
       render: (source: FocusTopic['source']) =>
         (source || 'manual') === 'auto' ? (
-          <Tag color="orange">自动派生</Tag>
+          <Tag color="purple">自动派生</Tag>
         ) : (
           <Tag>手动创建</Tag>
         ),
@@ -479,7 +479,7 @@ export default function TopicsPage() {
           <StarOutlined style={{ fontSize: 24, marginRight: 12 }} />
           <h2>我的关注</h2>
           {autoCount > 0 && (
-            <Tag color="orange" icon={<ThunderboltOutlined />}>
+            <Tag color="purple" icon={<ThunderboltOutlined />}>
               {autoCount} 条自动派生
             </Tag>
           )}

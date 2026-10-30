@@ -88,8 +88,10 @@ $border: #eef0f2;
   }
 
   &--active {
-    background: $accent-soft;
-    box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.18);
+    // 选中项保持白底（原来铺了一层主色浅底，整列看过去像蒙了层淡紫），
+    // 用一圈主色描边表达选中，颜色只出现在边框上。
+    background: #fff;
+    box-shadow: inset 0 0 0 1px var(--ant-color-primary-border);
   }
 
   &__title {
@@ -199,8 +201,9 @@ $border: #eef0f2;
     margin-top: 10px;
     padding: 6px 10px;
     border-radius: 8px;
-    background: $accent-soft;
-    color: $accent;
+    // 提示块也用中性底：主色只留给「可交互 / 已选中」，不当大面积背景用
+    background: #f7f7f8;
+    color: #595959;
     font-size: 12px;
   }
 
