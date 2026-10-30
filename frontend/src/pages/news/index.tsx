@@ -125,7 +125,9 @@ export default function NewsPage() {
   // 是否过滤外文结果（默认关）：行业相关性闸对非中文内容放行，打开后可丢弃外文报道
   const [excludeForeign, setExcludeForeign] = useState(false)
 
-  const pageSize = 20
+  // 每页条数必须是 state：写成常量再传进 Pagination 的 pageSize 时，选中「50条/页」
+  // 后受控值立刻被改回 20，表现就是"选完自动跳回 20条/页"。
+  const [pageSize, setPageSize] = useState(20)
 
   // 获取资讯列表
   const fetchNews = useCallback(async () => {
@@ -151,7 +153,7 @@ export default function NewsPage() {
     } finally {
       setNewsLoading(false)
     }
-  }, [newsCategory, newsEventType, newsPage, currentIndustryId])
+  }, [newsCategory, newsEventType, newsPage, pageSize, currentIndustryId])
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -833,14 +835,24 @@ export default function NewsPage() {
           </div>
         )}
 
-        {/* 分页（检索模式无分页） */}
-        {!isSearchMode && newsTotal > pageSize && (
+        {/* 分页（检索模式无分页）；阈值用最小可选条数 20，换到 50/100 时不会被收起 */}
+        {!isSearchMode && newsTotal > 20 && (
           <div className={styles['pagination-wrapper']}>
             <Pagination
               current={newsPage}
               pageSize={pageSize}
               total={newsTotal}
-              onChange={(page) => setNewsPage(page)}
+              showSizeChanger
+              pageSizeOptions={[20, 50, 100]}
+              onChange={(page, size) => {
+                // 换每页条数后回到第 1 页，否则 offset 会落到一个空页
+                if (size !== pageSize) {
+                  setPageSize(size)
+                  setNewsPage(1)
+                  return
+                }
+                setNewsPage(page)
+              }}
               showTotal={(total) => `共 ${total} 条`}
             />
           </div>
