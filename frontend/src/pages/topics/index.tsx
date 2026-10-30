@@ -385,7 +385,7 @@ export default function TopicsPage() {
             <Progress
               percent={Number((((effective + 2) / 4) * 100).toFixed(0))}
               size="small"
-              strokeColor={effective >= 1 ? '#cf1322' : effective >= 0 ? '#1890ff' : '#8c8c8c'}
+              strokeColor={effective >= 1 ? '#cf1322' : effective >= 0 ? '#991D85' : '#8c8c8c'}
               format={() => effective.toFixed(2)}
             />
             {penalty !== 0 && (

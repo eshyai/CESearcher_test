@@ -69,7 +69,7 @@
         }
 
         &-selected {
-          background-color: #e6f4ff !important;
+          background-color: var(--ant-color-primary-bg) !important;
         }
       }
     }

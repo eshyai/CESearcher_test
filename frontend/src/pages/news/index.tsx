@@ -751,7 +751,7 @@ export default function NewsPage() {
               <Statistic
                 title="政策"
                 value={newsStats?.by_category?.['政策'] || 0}
-                valueStyle={{ color: '#1890ff' }}
+                valueStyle={{ color: 'var(--ant-color-primary)' }}
               />
             </Card>
           </Col>

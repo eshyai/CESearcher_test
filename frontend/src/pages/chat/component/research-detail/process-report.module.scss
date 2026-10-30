@@ -27,13 +27,13 @@
   gap: 6px;
 
   &:hover:not(:disabled) {
-    border-color: #1677ff;
-    color: #1677ff;
+    border-color: var(--ant-color-primary);
+    color: var(--ant-color-primary);
   }
 
   &.active {
-    background: #1677ff;
-    border-color: #1677ff;
+    background: var(--ant-color-primary);
+    border-color: var(--ant-color-primary);
     color: white;
   }
 
@@ -86,7 +86,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #1677ff;
+  background: var(--ant-color-primary);
   color: white;
   font-size: 12px;
   font-weight: 600;
@@ -136,7 +136,7 @@
     blockquote {
       margin: 1em 0;
       padding: 8px 16px;
-      border-left: 3px solid #1677ff;
+      border-left: 3px solid var(--ant-color-primary);
       background: #f6f8fa;
       color: #666;
     }
@@ -154,7 +154,7 @@
       font-weight: 700;
       margin-bottom: 24px;
       padding-bottom: 12px;
-      border-bottom: 2px solid #1677ff;
+      border-bottom: 2px solid var(--ant-color-primary);
     }
 
     h2 {
@@ -197,7 +197,7 @@
     blockquote {
       margin: 16px 0;
       padding: 12px 20px;
-      border-left: 4px solid #1677ff;
+      border-left: 4px solid var(--ant-color-primary);
       background: #f6f8fa;
       color: #555;
       font-style: italic;
@@ -221,7 +221,7 @@
     }
 
     a {
-      color: #1677ff;
+      color: var(--ant-color-primary);
       text-decoration: none;
 
       &:hover {
@@ -232,7 +232,7 @@
     // 引用脚注样式
     sup {
       a {
-        color: #1677ff;
+        color: var(--ant-color-primary);
         font-size: 11px;
         padding: 0 2px;
       }
@@ -315,16 +315,16 @@
 .inlineGraph {
   margin: 24px 0;
   padding: 16px 20px;
-  background: linear-gradient(135deg, #f0f7ff 0%, #e6f4ff 100%);
-  border: 1px solid #91caff;
+  background: linear-gradient(135deg, var(--ant-color-primary-bg) 0%, var(--ant-color-primary-bg) 100%);
+  border: 1px solid var(--ant-color-primary-border);
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.08);
+  box-shadow: 0 2px 8px rgba(153, 29, 133, 0.08);
 }
 
 .graphTitle {
   font-size: 15px;
   font-weight: 600;
-  color: #1677ff;
+  color: var(--ant-color-primary);
   margin-bottom: 12px;
 }
 
@@ -344,7 +344,7 @@
 
 .categoryLabel {
   flex-shrink: 0;
-  color: #1677ff;
+  color: var(--ant-color-primary);
   font-weight: 500;
   min-width: 80px;
 }
@@ -356,7 +356,7 @@
 .graphStats {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed #91caff;
+  border-top: 1px dashed var(--ant-color-primary-border);
   font-size: 12px;
   color: #666;
 }

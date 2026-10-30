@@ -17,7 +17,7 @@
   }
 
   .user-avatar {
-    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+    background: linear-gradient(135deg, var(--ant-color-primary) 0%, var(--ant-color-primary-active) 100%);
     color: #fff;
     font-weight: 500;
     border: none;
@@ -38,7 +38,7 @@
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12) !important;
       --ant-color-bg-elevated: #fff;
       --ant-color-text: #333;
-      --ant-control-item-bg-hover: #f0f7ff;
+      --ant-control-item-bg-hover: var(--ant-color-primary-bg);
     }
 
     .ant-dropdown-menu-item {
@@ -49,8 +49,8 @@
       background-color: transparent !important;
 
       &:hover {
-        background: #f0f7ff !important;
-        background-color: #f0f7ff !important;
+        background: var(--ant-color-primary-bg) !important;
+        background-color: var(--ant-color-primary-bg) !important;
       }
     }
 

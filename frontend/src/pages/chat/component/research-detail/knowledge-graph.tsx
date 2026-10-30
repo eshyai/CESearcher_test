@@ -30,7 +30,7 @@ interface KnowledgeGraphProps {
 }
 
 const typeConfig: Record<string, { color: string; label: string }> = {
-  core: { color: '#1677ff', label: '核心' },
+  core: { color: '#991D85', label: '核心' },
   tech: { color: '#722ed1', label: '技术' },
   company: { color: '#52c41a', label: '企业' },
   policy: { color: '#fa8c16', label: '政策' },
@@ -97,7 +97,7 @@ export default function KnowledgeGraph({ data }: KnowledgeGraphProps) {
         },
         categories: usedTypes.map(type => ({
           name: typeConfig[type]?.label || type,
-          itemStyle: { color: typeConfig[type]?.color || '#1677ff' },
+          itemStyle: { color: typeConfig[type]?.color || '#991D85' },
         })),
         data: data.nodes.map(node => ({
           id: node.id,
@@ -106,7 +106,7 @@ export default function KnowledgeGraph({ data }: KnowledgeGraphProps) {
           category: usedTypes.indexOf(node.type),
           nodeType: node.type,
           itemStyle: {
-            color: typeConfig[node.type]?.color || '#1677ff',
+            color: typeConfig[node.type]?.color || '#991D85',
             shadowBlur: 10,
             shadowColor: 'rgba(0, 0, 0, 0.1)',
           },

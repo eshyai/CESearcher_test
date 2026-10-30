@@ -19,7 +19,7 @@
     display: inline-block;
     width: 4px;
     height: 20px;
-    background: #1890ff;
+    background: var(--ant-color-primary);
     border-radius: 2px;
   }
 }
@@ -28,7 +28,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #1890ff;
+  color: var(--ant-color-primary);
 
   span {
     font-size: 13px;
@@ -61,7 +61,7 @@
     margin: 4px 0;
 
     strong {
-      color: #1890ff;
+      color: var(--ant-color-primary);
     }
   }
 }
@@ -72,7 +72,7 @@
 
 .closeBtn {
   padding: 8px 24px;
-  background: #1890ff;
+  background: var(--ant-color-primary);
   color: white;
   border: none;
   border-radius: 6px;
@@ -80,6 +80,6 @@
   font-size: 14px;
 
   &:hover {
-    background: #40a9ff;
+    background: var(--ant-color-primary-hover);
   }
 }

@@ -1,8 +1,10 @@
 // 首页 = 资讯检索入口：一屏检索框 + 关注主题快捷词 + 四条功能入口
-// 配色沿用化工行业色（#B45309 / #FFF7ED），与 /news 页保持同一套语言
+// 配色统一走品牌主色（var(--ant-color-primary)），与 /news 保持同一套语言。
+// 原来的化工橙 #B45309 / #FFF7ED 已在换紫时统一掉 —— 别再往这里引第二个强调色，
+// 紫 + 橙两个高饱和并列会让首屏没有主次。
 
-$accent: #b45309;
-$accent-soft: #fff7ed;
+$accent: var(--ant-color-primary);
+$accent-soft: var(--ant-color-primary-bg);
 $text: #1f2329;
 $text-sub: #6b7280;
 $text-muted: #9ca3af;
@@ -151,7 +153,7 @@ $border: #ececec;
       &:focus,
       &:active {
         border: 0;
-        background: #96430a;
+        background: var(--ant-color-primary-active);
         color: #fff;
         box-shadow: none;
       }

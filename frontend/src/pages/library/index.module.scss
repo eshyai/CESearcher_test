@@ -1,8 +1,9 @@
 // 共享资讯库：左侧列表 + 右侧详情/批注
-// 配色沿用化工橙（#B45309 / #FFF7ED），与 /news、首页同一套语言
+// 配色统一走品牌主色（var(--ant-color-primary)），与 /news、首页同一套语言
+// （原来的化工橙 #B45309 / #FFF7ED 已随主色换紫统一掉）
 
-$accent: #b45309;
-$accent-soft: #fff7ed;
+$accent: var(--ant-color-primary);
+$accent-soft: var(--ant-color-primary-bg);
 $text: #1f2329;
 $text-sub: #8a8f98;
 $text-muted: #9ca3af;

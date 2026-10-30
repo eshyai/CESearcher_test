@@ -286,7 +286,7 @@ const ReAct过程 = (props: { item: API.ChatItem; onStepClick?: (stepId: string)
       case 'thought':
         return <BulbOutlined style={{ color: '#faad14' }} />
       case 'action':
-        return <ThunderboltOutlined style={{ color: '#1677ff' }} />
+        return <ThunderboltOutlined style={{ color: 'var(--ant-color-primary)' }} />
       case 'observation':
         return <EyeOutlined style={{ color: '#52c41a' }} />
       default:

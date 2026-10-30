@@ -39,7 +39,7 @@
       transition: color 0.2s;
 
       &:hover {
-        color: #1890ff;
+        color: var(--ant-color-primary);
       }
 
       &::before {

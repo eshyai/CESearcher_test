@@ -43,7 +43,7 @@
       .stat-value {
         font-size: 28px;
         font-weight: 600;
-        color: #1890ff;
+        color: var(--ant-color-primary);
       }
 
       .stat-label {
@@ -100,7 +100,7 @@
       line-height: 1.5;
 
       &:hover {
-        color: #1890ff;
+        color: var(--ant-color-primary);
       }
     }
 
@@ -318,13 +318,13 @@
     color: #595959;
 
     &:hover {
-      border-color: #1890ff;
-      color: #1890ff;
+      border-color: var(--ant-color-primary);
+      color: var(--ant-color-primary);
     }
 
     &.active {
-      background: #1890ff;
-      border-color: #1890ff;
+      background: var(--ant-color-primary);
+      border-color: var(--ant-color-primary);
       color: #fff;
     }
   }

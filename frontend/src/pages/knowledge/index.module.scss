@@ -178,12 +178,12 @@
     }
 
     .chunk-link {
-      color: #1890ff;
+      color: var(--ant-color-primary);
       cursor: pointer;
       transition: color 0.2s;
 
       &:hover {
-        color: #40a9ff;
+        color: var(--ant-color-primary-hover);
         text-decoration: underline;
       }
     }

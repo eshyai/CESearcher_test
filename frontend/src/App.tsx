@@ -9,7 +9,10 @@ function App() {
       theme={{
         cssVar: true,
         token: {
-          colorPrimary: '#2861E7',
+          // 品牌主色：紫（原 #2861E7 蓝）。悬浮/选中态由 antd 自动派生，
+          // 但样式表里另有约 50 处硬编码的 #1677ff/#1890ff 不跟 token 走，
+          // 已统一换成 var(--ant-color-primary) —— 再改主色只动这一行即可。
+          colorPrimary: '#991D85',
           borderRadius: 6
         },
       }}

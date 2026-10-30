@@ -13,7 +13,7 @@
 
     font-size: 12px;
     font-weight: bold;
-    color: #007aff;
+    color: var(--ant-color-primary);
 
     .icon {
       width: 14px;
@@ -177,7 +177,7 @@
     flex-shrink: 0;
     font-size: 12px;
     font-weight: bold;
-    color: #007aff;
+    color: var(--ant-color-primary);
   }
 
   .desc {

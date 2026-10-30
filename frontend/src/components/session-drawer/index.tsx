@@ -166,7 +166,7 @@ export function SessionDrawer({ open, onClose }: SessionDrawerProps) {
                 }
               >
                 <List.Item.Meta
-                  avatar={<MessageOutlined style={{ fontSize: 20, color: '#1890ff' }} />}
+                  avatar={<MessageOutlined style={{ fontSize: 20, color: 'var(--ant-color-primary)' }} />}
                   title={
                     editingId === session.id ? (
                       <Input

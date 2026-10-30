@@ -19,5 +19,5 @@
   background-color: #fff;
   --ant-color-bg-elevated: #fff;
   --ant-color-text: #333;
-  --ant-control-item-bg-hover: #f0f7ff;
+  --ant-control-item-bg-hover: var(--ant-color-primary-bg);
 }

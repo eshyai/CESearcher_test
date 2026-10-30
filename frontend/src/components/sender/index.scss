@@ -28,9 +28,9 @@
       }
 
       &.ant-tag-processing {
-        background: #e6f4ff;
-        border-color: #91caff;
-        color: #1677ff;
+        background: var(--ant-color-primary-bg);
+        border-color: var(--ant-color-primary-border);
+        color: var(--ant-color-primary);
       }
 
       &.ant-tag-error {
